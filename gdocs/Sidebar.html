@@ -23,7 +23,11 @@
     .card .text { white-space: pre-wrap; }
     .card .hint { font-weight: bold; margin: 2px 0; }
     .verdict { font-size: 11px; text-transform: uppercase; letter-spacing: .03em; }
+    .verdict b { display: inline-block; color: #fff; border-radius: 3px; padding: 0 5px; margin-right: 2px; }
+    .v-reject b { background: #b3261e; } .v-negotiate b { background: #b06000; } .v-accept b { background: #0d652d; } .v-human_review b { background: #5f6368; }
+    .card.c-reject { border-left: 4px solid #b3261e; }
     .diff del { color: #b3261e; } .diff ins { color: #0d652d; text-decoration: none; background: #e6f4ea; }
+    .diff del + ins { margin-left: .3em; }
     .state { display: inline-block; font-size: 11px; border-radius: 10px; padding: 1px 8px; margin-top: 4px; background: #e8eaed; }
     .state.s-open { background: #fef7e0; } .state.s-changed { background: #fce8e6; }
     .state.s-accepted, .state.s-rejected, .state.s-countered { background: #e6f4ea; }
@@ -240,11 +244,17 @@
     }
 
     /** Try each text until one is found (a paragraph with an open suggestion may read either way). */
-    function goToFirst(texts, note) {
+    // texts from index `exact` on are parts of the paragraph (the words their change left alone)
+    function goToFirst(texts, note, exact) {
       var i = 0;
+      if (exact == null) exact = texts.length;
       (function next() {
         if (i >= texts.length) { note.textContent = "Not found in the document (edited since?)."; return; }
-        call("goToText", [texts[i++]], function (found) { if (found) note.textContent = ""; else next(); });
+        var partial = i >= exact;
+        call("goToText", [texts[i++]], function (found) {
+          if (found) note.textContent = partial ? "Jumped to the unchanged part of the clause." : "";
+          else next();
+        });
       })();
     }
 
@@ -270,10 +280,12 @@
       var show = $("showHandled").checked, hidden = 0;
       state.review.cards.forEach(function (c) {
         if (c.handled && !show) { hidden++; return; }
-        var card = el("div", "card" + (c.handled ? " handled" : ""));
+        var card = el("div", "card c-" + c.verdict + (c.handled ? " handled" : ""));
         card.appendChild(el("div", "head", c.title));
-        card.appendChild(el("div", "verdict v-" + c.verdict,
-          c.verdict.replace("_", " ") + (c.risk ? " · risk " + c.risk : "") + (c.ruleIds.length ? " · " + c.ruleIds.join(", ") : "")));
+        var verdict = el("div", "verdict v-" + c.verdict);
+        verdict.appendChild(el("b", "", c.verdict.replace("_", " ")));
+        verdict.appendChild(document.createTextNode((c.risk ? " · risk " + c.risk : "") + (c.ruleIds.length ? " · " + c.ruleIds.join(", ") : "")));
+        card.appendChild(verdict);
         card.appendChild(el("div", "state s-" + c.state, c.stateText));
         if (c.rationale) card.appendChild(el("div", "muted", c.rationale));
         card.appendChild(el("div", "label", "Their change"));
@@ -287,7 +299,7 @@
         }
         var note = el("div", "muted");
         var go = el("button", "", "Go to");
-        go.onclick = function () { goToFirst(c.goTo, note); };
+        go.onclick = function () { goToFirst(c.goTo, note, c.goToExact); };
         card.appendChild(go);
         if (c.edit) addEditButtons(card, c.edit, note, c.ours);
         if (c.comment && !c.handled) {

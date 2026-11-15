@@ -62,7 +62,7 @@ Requires Node 18+.
 ```bash
 cd redlining-pal
 npm install
-npm test            # 110 tests should pass
+npm test            # 113 tests should pass
 ```
 
 ### 2. Trust a localhost certificate
@@ -217,7 +217,7 @@ The counterparty's .docx often ends up in Google Drive. The add-on brings the ve
 | Changes without track changes | cards; **Accept all is blocked** until acknowledged | cards with **Go to** and a **suggested edit** of only the words that differ ("Insert “or fraud” after “…in case of intent”"): **Mark the spot** puts the cursor there (or selects the text to replace or delete), **Copy** copies just those words. A red **advisory** warning until acknowledged. Accept all in Google Docs cannot be blocked. |
 | Accept / reject / counter-propose | written as tracked changes | not possible from a script; the lawyer pastes the copied words (or presses Delete) in **Suggesting mode**, which makes it a normal, minimal suggestion |
 | Unknown document | triage, confirmed by the lawyer | same flow |
-| Playbook review of each tracked change | ✅ live review of the open document | ✅ the findings stored at intake, one card per suggestion (reject first): verdict, rules, reasoning, their change as a word diff, and what to do: accept (✓), reject (✗), or reject and then suggest our counter-proposal as a minimal edit; **Copy comment** for the counterparty. Each card shows its **state** in the Doc as it is now: open, our counter-proposal is in, accepted, rejected, or changed. Handled cards are hidden until "Show handled changes". |
+| Playbook review of each tracked change | ✅ live review of the open document | ✅ the findings stored at intake, one card per suggestion in clause order, verdict as a badge (reject cards marked red): verdict, rules, reasoning, their change as a word diff, and what to do: accept (✓), reject (✗), or reject and then suggest our counter-proposal as a minimal edit; **Copy comment** for the counterparty. Each card shows its **state** in the Doc as it is now: open, our counter-proposal is in, accepted, rejected, or changed. Handled cards are hidden until "Show handled changes". **Go to** also works while their suggestion is still open: it falls back to the words their change did not touch. |
 
 How it identifies the open Doc: Apps Script exports it as .docx (exactly like *File → Download → Microsoft Word*) and sends the file to `/api/documents/identify-file`. We checked by hand that a Google Docs export keeps every tracked change as a suggestion and back, the paragraph texts, and our `rc-ver` stamp (Google hides the stamp in *File → Details* but writes it back on export). So the server needs no Google-specific parsing.
 

@@ -93,7 +93,6 @@ export function untrackedUnits(serverUnits, parsedParas) {
 
 // ---- playbook review (Google Docs sidebar) ------------------------------------------------
 
-const VERDICT_ORDER = { reject: 0, human_review: 1, negotiate: 2, accept: 3 };
 const STATE_TEXT = {
   open: "Open",
   countered: "Our counter-proposal is in",
@@ -104,7 +103,32 @@ const STATE_TEXT = {
 const HANDLED = new Set(["countered", "accepted", "rejected"]);
 
 /**
+ * What "Go to" searches for, in order: their text, our text, then the words their change
+ * did not touch (longest first). While a suggestion is open, Google Docs' script text of
+ * the paragraph holds the deleted AND the inserted words, so neither full text matches;
+ * the unchanged start or end still does. An anchor needs 3 words or 15 characters, so a
+ * short one like "The" cannot land in another clause.
+ * @returns { goTo: string[], goToExact: number }  entries from goToExact on are partial
+ */
+function goToTexts(before, after) {
+  const exact = [after, before].filter(Boolean);
+  const b = String(before || "").split(/\s+/).filter(Boolean);
+  const a = String(after || "").split(/\s+/).filter(Boolean);
+  let p = 0;
+  while (p < b.length && p < a.length && b[p] === a[p]) p++;
+  let s = 0;
+  while (s < b.length - p && s < a.length - p && b[b.length - 1 - s] === a[a.length - 1 - s]) s++;
+  const good = (words) => words.length >= 3 || words.join(" ").length >= 15;
+  const anchors = [b.slice(0, p), b.slice(b.length - s)]
+    .filter((w) => w.length && w.length < b.length && good(w))
+    .map((w) => w.join(" "))
+    .sort((x, y) => y.length - x.length);
+  return { goTo: [...exact, ...anchors], goToExact: exact.length };
+}
+
+/**
  * Response of POST /api/versions/:id/findings -> what the "Playbook review" section shows.
+ * Cards follow the document (clause order); the verdict is a badge on each card.
  * Only the counterparty's own changes (tracked / compare); untracked ones have their own section.
  * Counter-proposals follow the Word flow: reject their change, then suggest ours, as the
  * smallest edit from our text (what the paragraph says once theirs is rejected).
@@ -112,7 +136,7 @@ const HANDLED = new Set(["countered", "accepted", "rejected"]);
 export function reviewCards(res) {
   const units = (res?.units || []).filter((u) => u.source !== "untracked");
   const cards = units
-    .map((u, i) => {
+    .map((u) => {
       const f = u.finding || {};
       const verdict = f.verdict || "human_review";
       const cp = f.counterProposal && norm(f.counterProposal) !== norm(u.before) ? norm(f.counterProposal) : null;
@@ -131,17 +155,16 @@ export function reviewCards(res) {
         else steps.push("Reject their suggestion (✗), or keep it open and offer our fallback position in a comment.");
       }
       return {
-        id: u.id, order: i, verdict, risk: f.risk || null, ruleIds: f.ruleIds || [],
+        id: u.id, verdict, risk: f.risk || null, ruleIds: f.ruleIds || [],
         title: `${u.section || "Paragraph"} · ${u.kind}`,
         rationale: f.rationale || "", flags: f.flags || [],
         diff: wordDiff(u.before, u.after),
         state: u.state, stateText: STATE_TEXT[u.state] || u.state, handled: HANDLED.has(u.state),
         steps, edit, ours: cp, comment: f.comment || "",
-        goTo: [u.after, u.before].filter(Boolean),
+        ...goToTexts(u.before, u.after),
         carriedOver: u.status === "carried_over",
       };
-    })
-    .sort((a, b) => (VERDICT_ORDER[a.verdict] ?? 9) - (VERDICT_ORDER[b.verdict] ?? 9) || a.order - b.order);
+    });
 
   const verdicts = {};
   for (const c of cards) verdicts[c.verdict] = (verdicts[c.verdict] || 0) + 1;

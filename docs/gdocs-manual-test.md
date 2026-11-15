@@ -88,13 +88,13 @@ A large change (over 200 characters) still shows "Copy our wording" for the whol
 
 | # | Check | Expected | Result |
 |---|---|---|---|
-| R1 | Open the panel on the converted v2.1 | "Playbook review": 12 changes · 3 reject · 9 negotiate; "0 of 12 handled"; "Playbook spa-share-deal@…, mock reviewer" | – |
-| R2 | Card order and content | Reject cards first; verdict, rules, reasoning; their change as a word diff (red deleted, green inserted); numbered steps | – |
-| R3 | Go to on a card whose paragraph has an open suggestion | Doc scrolls to the paragraph (tries their text, then ours: note which one worked, Google's script view of suggested text is undocumented) | – |
-| R4 | Accept one suggestion (✓), reject another (✗), Refresh status | "Accepted" / "Rejected", cards hidden, "2 of 12 handled"; Show handled changes brings them back | – |
-| R5 | Reject one, then suggest a different wording on it in Suggesting mode, Refresh | "Our counter-proposal is in" | – |
-| R6 | Copy comment, Ctrl+Alt+M on their suggestion, paste | The prepared comment as a Docs comment | – |
-| R7 | Server audit log | `findings` lines with version id, unit count and progress counts, no contract text | – |
+| R1 | Open the panel on the converted v2.1 | "Playbook review": 12 changes · 3 reject · 9 negotiate; "0 of 12 handled"; "Playbook spa-share-deal@…, mock reviewer" | ✅ |
+| R2 | Card order and content | Cards in clause order (2.2 … 10.1), verdict as a coloured badge, reject cards with a red bar; reasoning; their change as a word diff, each changed phrase deleted words first, then inserted (4.2: ~~from the first euro.~~ **only for the excess.**); numbered steps | ✅ (first run: reject-first order and interleaved words were confusing; changed to clause order and grouped phrases) |
+| R3 | Go to on a card whose paragraph has an open suggestion | Doc scrolls to the paragraph. Docs' script text of an open suggestion holds deleted and inserted words, so the full texts do not match; Go to falls back to the unchanged words ("Jumped to the unchanged part of the clause.") | ✅ 8.1 (via the unchanged part), 9.2 (new clause, full text). First run: 8.1 "Not found" before the fallback |
+| R4 | Accept one suggestion (✓), reject another (✗), Refresh status | "Accepted" / "Rejected", cards hidden, "2 of 12 handled"; Show handled changes brings them back | ✅ (5.1 accepted, 4.2 rejected) |
+| R5 | Reject one, then suggest a different wording on it in Suggesting mode, Refresh | "Our counter-proposal is in" | ✅ (4.1: rejected 100,000, suggested 50,000) |
+| R6 | Copy comment, Ctrl+Alt+M on their suggestion, paste | The prepared comment as a Docs comment | ✅ |
+| R7 | Server audit log | `findings` lines with version id, unit count and progress counts, no contract text | ✅ |
 
 ## G. Triage of an unknown Doc
 
