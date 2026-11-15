@@ -62,4 +62,25 @@ details { margin: 6px 0; color: var(--muted); font-size: 12px; }
 .flags { margin: 2px 0 6px; padding-left: 16px; color: var(--reject); font-size: 12px; }
 .small { display: block; font-size: 11px; color: var(--muted); margin: 4px 0; }
 .actions { display: flex; gap: 5px; flex-wrap: wrap; margin-top: 6px; }
+/* version timeline */
+.version { border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; margin-bottom: 12px; }
+.version .status { margin: 0; }
+.version-head { display: flex; gap: 6px; align-items: center; justify-content: space-between; flex-wrap: wrap; }
+.muted { color: var(--muted); }
+.small-text { font-size: 12px; margin: 2px 0 6px; }
+.warn { color: var(--negotiate); background: #fffaeb; border-radius: 4px; padding: 4px 6px; margin: 6px 0; }
+.links { display: grid; grid-template-columns: auto 1fr; gap: 2px 8px; margin: 6px 0; }
+.links dt { color: var(--muted); }
+.links dd { margin: 0; }
+button.link { border: none; background: none; color: var(--navy); text-decoration: underline; padding: 0 2px; }
+.untracked { margin: 6px 0; }
+.badge.alert { background: var(--del); color: var(--reject); font-weight: 600; }
+.chain { margin: 4px 0; padding-left: 18px; color: var(--muted); }
+.chain .current { color: var(--ink); font-weight: 600; }
+.chain .superseded { text-decoration: line-through; }
+.chain .role { font-size: 11px; background: #eef2f6; border-radius: 8px; padding: 0 6px; margin-left: 4px; text-decoration: none; display: inline-block; }
+.candidates { padding-left: 16px; color: var(--muted); font-size: 12px; }
+#triage-form { margin-top: 8px; }
+#triage-form label, #triage-form fieldset { display: block; margin-bottom: 8px; }
+.card.untracked-change { border-style: dashed; border-left-style: solid; }
 footer { position: fixed; bottom: 0; left: 0; right: 0; padding: 6px 12px; background: #fff; border-top: 1px solid var(--line); font-size: 11px; color: var(--muted); }

@@ -1,15 +1,21 @@
 /* global Office, Word, JSZip */
 import { parseParagraphs, unitsFromTrackedChanges, norm } from "./lib/ooxml.js";
 import { diffParagraphs, attachSections, wordDiff, minimalEdit } from "./lib/diff.js";
+import { versionView, untrackedUnits } from "./lib/version-view.js";
 
 const $ = (id) => document.getElementById(id);
-const state = { units: [], findings: [], playbook: null, source: "tracked", api16: false, playbooks: [] };
+const state = {
+  units: [], findings: [], playbook: null, source: "tracked", api16: false, playbooks: [], matters: [],
+  identify: null, view: null, triageId: null, opened: {},
+};
 
 Office.onReady(async (info) => {
   if (info.host !== Office.HostType.Word) return setStatus("Open this add-in in Word.", true);
   state.api16 = Office.context.requirements.isSetSupported("WordApi", "1.6");
   wireUi();
   await loadPlaybooks();
+  state.matters = await fetch("/api/matters").then((x) => (x.ok ? x.json() : [])).catch(() => []);
+  await guard(identifyOpenDocument);
   if (!state.api16) setStatus("This Word build lacks WordApi 1.6: accept/reject of tracked changes is disabled; compare mode still works.");
 });
 
@@ -17,9 +23,20 @@ function wireUi() {
   document.querySelectorAll('input[name="source"]').forEach((r) =>
     r.addEventListener("change", () => {
       state.source = r.value;
-      if (r.value === "compare") $("baseline").click();
+      // with a registered base, compare against it; otherwise ask for a file
+      if (r.value === "compare" && !state.view?.base) $("baseline").click();
     }),
   );
+  $("recheck").addEventListener("click", () => guard(identifyOpenDocument));
+  $("open-base").addEventListener("click", () => guard(openBase));
+  $("ack-untracked").addEventListener("change", () => guard(ackUntracked));
+  $("triage-file").addEventListener("click", () => guard(fileForTriage));
+  $("t-matter").addEventListener("change", () => guard(loadBases));
+  document.querySelectorAll('input[name="t-side"]').forEach((r) => r.addEventListener("change", () => guard(loadBases)));
+  $("triage-form").addEventListener("submit", (e) => {
+    e.preventDefault();
+    guard(confirmTriage);
+  });
   $("baseline").addEventListener("change", () => {
     const f = $("baseline").files[0];
     setStatus(f ? `Baseline: ${f.name}` : "No baseline chosen.");
@@ -40,6 +57,185 @@ async function loadPlaybooks() {
   const badge = $("mode-badge");
   badge.textContent = r.mode === "live" ? r.model : "mock reviewer";
   badge.className = `badge ${r.mode}`;
+}
+
+// ---------- which version is open (timeline) ----------
+
+async function identifyOpenDocument() {
+  $("version-status").hidden = false;
+  $("version-status").textContent = "Checking which version this is…";
+  const { parsed, stamp } = await Word.run(async (context) => {
+    const ox = context.document.body.getOoxml();
+    const prop = context.document.properties.customProperties.getItemOrNullObject("rc-ver");
+    prop.load("value");
+    await context.sync();
+    return { parsed: parseParagraphs(ox.value), stamp: prop.isNullObject ? null : String(prop.value) };
+  });
+  state.opened = { hasTrackedChanges: parsed.some((p) => p.hasChanges) };
+  const r = await api("/api/documents/identify", {
+    afterTexts: parsed.map((p) => norm(p.after)), beforeTexts: parsed.map((p) => norm(p.before)), stamp,
+  });
+  if (!r.ok) {
+    $("version-status").textContent = "Version check unavailable.";
+    throw new Error(r.data.error || `version check failed (${r.status})`);
+  }
+  showVersion(r.data);
+}
+
+function showVersion(identify) {
+  state.identify = identify;
+  const v = (state.view = versionView(identify, state.opened));
+  $("version-status").hidden = true;
+  $("version-known").hidden = !v.known;
+  $("version-unknown").hidden = v.known;
+  if (!v.known) return showUnknown(v);
+
+  $("v-title").textContent = v.title;
+  $("v-matter").textContent = v.matterId;
+  $("v-match").textContent = v.match;
+  $("v-warning").hidden = !v.warning;
+  $("v-warning").textContent = v.warning || "";
+  $("v-base").textContent = v.base?.text || "none";
+  $("open-base").hidden = !v.base;
+  $("v-supersedes").textContent = v.supersedes || "nothing";
+  $("v-untracked").hidden = !v.untracked.count;
+  $("v-untracked-text").textContent = v.untracked.text || "";
+  $("ack-untracked").checked = !!v.untracked.acknowledgedAt;
+  $("ack-untracked").disabled = !!v.untracked.acknowledgedAt; // an acknowledgement is audited and final
+  const ROLE = { base: "base", superseded: "superseded", current: "this document" };
+  $("v-chain").innerHTML = v.chain
+    .map((c) => `<li class="${c.current ? "current" : ""} ${c.status === "superseded" ? "superseded" : ""}">${esc(c.text)}${c.role ? ` <span class="role">${ROLE[c.role]}</span>` : ""}</li>`)
+    .join("");
+  $("v-flags").innerHTML = v.flags.map((f) => `<li>${esc(f)}</li>`).join("");
+
+  // the review setup follows the version: mode, compare target, playbook
+  const radio = document.querySelector(`input[name="source"][value="${v.source}"]`);
+  if (radio) radio.checked = true;
+  state.source = v.source;
+  $("compare-target").textContent = v.base ? `the base (${identify.timeline.base.label}) from the registry` : "my last version";
+  const playbook = state.matters.find((m) => m.id === v.matterId)?.playbook;
+  if (playbook && [...$("playbook").options].some((o) => o.value === playbook)) $("playbook").value = playbook;
+  applyGate();
+}
+
+function showUnknown(v) {
+  $("u-candidates").innerHTML = v.candidates.length
+    ? v.candidates.map((c) => `<li>${esc(c.text)}</li>`).join("")
+    : "<li>No similar document in any matter.</li>";
+  $("triage-file").hidden = !!state.triageId;
+  $("triage-form").hidden = !state.triageId;
+  applyGate();
+}
+
+async function openBase() {
+  const base = state.view?.base;
+  if (!base) return;
+  setStatus("Opening the base version…");
+  const res = await fetch(`/api/versions/${encodeURIComponent(base.id)}/file`);
+  if (!res.ok) throw new Error(`Could not load the base version (${res.status}).`);
+  const b64 = toBase64(new Uint8Array(await res.arrayBuffer()));
+  await Word.run(async (context) => {
+    context.application.createDocument(b64).open();
+    await context.sync();
+  });
+  setStatus(`Opened ${base.text} in a new window.`);
+}
+
+async function ackUntracked() {
+  const box = $("ack-untracked");
+  if (!box.checked || !state.view?.known) return;
+  const r = await api(`/api/versions/${encodeURIComponent(state.view.versionId)}/ack-untracked`, {});
+  if (!r.ok) {
+    box.checked = false;
+    throw new Error(r.data.error || `could not record the acknowledgement (${r.status})`);
+  }
+  state.identify.timeline.untracked.acknowledgedAt = r.data.acknowledgedAt;
+  showVersion(state.identify);
+  setStatus("Acknowledged. Bulk accept is available again.");
+}
+
+/** "Accept all" is blocked while untracked changes are unacknowledged. Run after anything that re-enables buttons. */
+function applyGate() {
+  const b = $("accept-ok");
+  if (state.view?.gateClosed) {
+    b.disabled = true;
+    b.title = "Blocked: review the changes made without track changes and tick the box at the top first.";
+  } else {
+    b.disabled = false;
+    b.title = "Accept every change the review marked as acceptable";
+  }
+}
+
+// ---------- unknown document: triage, a lawyer decides ----------
+
+async function fileForTriage() {
+  setStatus("Uploading the document for a matter decision…");
+  const bytes = await readDocxBytes();
+  const name = (Office.context.document.url || "").split(/[\\/]/).pop() || "from-word.docx";
+  const r = await api("/api/documents/triage", bytes, { raw: true, headers: { "x-file-name": name } });
+  if (r.status === 409) {
+    setStatus("This document is already registered.");
+    return showVersion({ status: "exact", versionId: r.data.versionId, score: 1, flags: [], timeline: r.data.timeline });
+  }
+  if (!r.ok) throw new Error(r.data.error || `filing failed (${r.status})`);
+  state.triageId = r.data.triageId;
+  const likely = new Set(r.data.candidates.map((c) => c.matterId));
+  const matters = [...r.data.matters].sort((a, b) => Number(likely.has(b.id)) - Number(likely.has(a.id)));
+  $("t-matter").innerHTML = matters.map((m) => `<option value="${esc(m.id)}">${esc(m.id)}: ${esc(m.title || "")}</option>`).join("");
+  $("t-id").textContent = state.triageId;
+  $("triage-file").hidden = true;
+  $("triage-form").hidden = false;
+  await loadBases();
+  setStatus("Choose the matter, the side and the base, then confirm.");
+}
+
+async function loadBases() {
+  if (!state.triageId) return;
+  const side = document.querySelector('input[name="t-side"]:checked').value;
+  const matterId = $("t-matter").value;
+  const r = await api(`/api/triage/${encodeURIComponent(state.triageId)}/bases?matterId=${encodeURIComponent(matterId)}&side=${side}`);
+  if (!r.ok) throw new Error(r.data.error || `could not load bases (${r.status})`);
+  $("t-base").innerHTML = '<option value="">No base: first version in this matter</option>' +
+    r.data.bases
+      .map((b, i) => `<option value="${esc(b.versionId)}"${i === 0 ? " selected" : ""}>${esc(b.label)}: ${Math.round(b.coverage * 100)}% match${i === 0 ? " (suggested)" : ""}</option>`)
+      .join("");
+  $("t-flags").innerHTML = r.data.flags.map((f) => `<li>${esc(f)}</li>`).join("");
+  $("triage-confirm").textContent = `Register as ${side === "ours" ? "our" : "counterparty"} version in ${matterId}`;
+}
+
+async function confirmTriage() {
+  const side = document.querySelector('input[name="t-side"]:checked').value;
+  const r = await api(`/api/triage/${encodeURIComponent(state.triageId)}/assign`, {
+    matterId: $("t-matter").value, side, baseId: $("t-base").value || undefined,
+  });
+  if (!r.ok) throw new Error(r.data.error || `registration failed (${r.status})`);
+  state.triageId = null;
+  $("triage-form").hidden = true;
+  showVersion({ status: "exact", versionId: r.data.versionId, score: 1, flags: r.data.flags || [], timeline: r.data.timeline });
+  setStatus(`Registered as ${r.data.versionLabel} in ${r.data.matterId}.`);
+}
+
+/** The open document as .docx bytes (Office "compressed" file, read in slices). */
+function readDocxBytes() {
+  const ok = Office.AsyncResultStatus.Succeeded;
+  return new Promise((resolve, reject) => {
+    Office.context.document.getFileAsync(Office.FileType.Compressed, { sliceSize: 4 * 1024 * 1024 }, (res) => {
+      if (res.status !== ok) return reject(new Error(res.error?.message || "could not read the document"));
+      const file = res.value;
+      const parts = [];
+      const next = (i) => file.getSliceAsync(i, (s) => {
+        if (s.status !== ok) { file.closeAsync(); return reject(new Error(s.error?.message || "could not read the document")); }
+        parts.push(new Uint8Array(s.value.data));
+        if (i + 1 < file.sliceCount) return next(i + 1);
+        file.closeAsync();
+        const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
+        let at = 0;
+        for (const p of parts) { out.set(p, at); at += p.length; }
+        resolve(out);
+      });
+      next(0);
+    });
+  });
 }
 
 // ---------- scanning ----------
@@ -64,17 +260,31 @@ async function scanAndReview() {
   }
 
   let units;
+  let untracked = [];
   if (state.source === "tracked") {
     units = unitsFromTrackedChanges(parsed);
-    if (!units.length) return setStatus("No tracked changes found. Did the counterparty send a clean copy? Try compare mode.");
+    // edits made without track changes are invisible in the markup; intake found them against the base
+    untracked = await loadUntracked(parsed);
+    if (!units.length && !untracked.length) return setStatus("No tracked changes found. Did the counterparty send a clean copy? Try compare mode.");
   } else {
+    let buf;
     const file = $("baseline").files[0];
-    if (!file) { $("baseline").click(); return setStatus("Choose your last version (.docx) first."); }
-    const zip = await JSZip.loadAsync(await file.arrayBuffer());
+    if (file) {
+      buf = await file.arrayBuffer();
+    } else if (state.view?.base) {
+      setStatus(`Comparing with ${state.view.base.text} from the registry…`);
+      const res = await fetch(`/api/versions/${encodeURIComponent(state.view.base.id)}/file`);
+      if (!res.ok) throw new Error(`Could not load the base version (${res.status}).`);
+      buf = await res.arrayBuffer();
+    } else {
+      $("baseline").click();
+      return setStatus("Choose your last version (.docx) first.");
+    }
+    const zip = await JSZip.loadAsync(buf);
     const xml = await zip.file("word/document.xml").async("string");
     const oldParas = parseParagraphs(xml).map((p) => p.after);
     units = diffParagraphs(oldParas, parsed.map((p) => p.after));
-    if (!units.length) return setStatus("No differences against your last version.");
+    if (!units.length) return setStatus("No differences against the base version.");
   }
   units = attachSections(units, parsed.map((p) => p.after)).map((u) => ({
     ...u,
@@ -82,21 +292,34 @@ async function scanAndReview() {
     done: false,
   }));
 
-  setStatus(`Reviewing ${units.length} change(s) against the playbook…`);
   const playbookId = $("playbook").value;
-  const resp = await fetch("/api/review", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ playbookId, units: units.map(({ id, section, kind, before, after }) => ({ id, section, kind, before, after })) }),
-  });
-  const data = await resp.json();
-  if (!resp.ok) throw new Error(data.error || `review failed (${resp.status})`);
+  let data = { findings: [], issues: [], mode: "registry" };
+  if (units.length) {
+    setStatus(`Reviewing ${units.length} change(s) against the playbook…`);
+    const resp = await fetch("/api/review", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ playbookId, units: units.map(({ id, section, kind, before, after }) => ({ id, section, kind, before, after })) }),
+    });
+    data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || `review failed (${resp.status})`);
+  }
 
-  state.units = units;
-  state.findings = data.findings;
+  // untracked cards keep the findings intake already validated (always at least human_review)
+  state.units = units.concat(untracked);
+  state.findings = data.findings.concat(untracked.map((u) => u.finding));
   state.playbook = await fetch(`/playbooks/${playbookId}.json`).then((x) => (x.ok ? x.json() : null)).catch(() => null);
   render(data.issues || []);
-  setStatus(`${units.length} change(s) reviewed (${data.mode}${data.model ? ": " + data.model : ""}).`);
+  setStatus(`${state.units.length} change(s) reviewed (${data.mode}${data.model ? ": " + data.model : ""})` +
+    (untracked.length ? `, incl. ${untracked.length} made without track changes.` : "."));
+}
+
+async function loadUntracked(parsed) {
+  const v = state.view;
+  if (!v?.known || !v.untracked.count) return [];
+  const r = await api(`/api/versions/${encodeURIComponent(v.versionId)}/untracked`);
+  if (!r.ok) throw new Error(r.data.error || `could not load untracked changes (${r.status})`);
+  return untrackedUnits(r.data.units, parsed);
 }
 
 // ---------- rendering ----------
@@ -125,9 +348,10 @@ function render(issues) {
   for (const { u, f } of rows) {
     const node = $("card-tpl").content.firstElementChild.cloneNode(true);
     node.classList.add(f.verdict);
+    if (u.untracked) node.classList.add("untracked-change");
     node.dataset.unit = u.id;
     node.querySelector(".verdict").textContent = LABEL[f.verdict];
-    node.querySelector(".risk").textContent = `${f.risk} risk · ${u.kind}`;
+    node.querySelector(".risk").textContent = `${f.risk} risk · ${u.untracked ? "untracked " : ""}${u.kind}`;
     node.querySelector(".section").textContent = u.section || "";
     node.querySelector(".diff").innerHTML = wordDiff(u.before, u.after)
       .map((s) => (s.op === "=" ? esc(s.text) : s.op === "+" ? `<ins>${esc(s.text)}</ins>` : `<del>${esc(s.text)}</del>`))
@@ -315,6 +539,9 @@ function searchSafe(s) {
 }
 
 async function bulk(kind, predicate) {
+  if (kind === "accept" && state.view?.gateClosed) {
+    throw new Error("Review the changes made without track changes and tick the box at the top first.");
+  }
   let n = 0;
   for (let k = 0; k < state.units.length; k++) {
     const u = state.units[k], f = state.findings[k];
@@ -337,7 +564,26 @@ async function guard(fn) {
     setStatus(e.message || String(e), true);
   } finally {
     document.querySelectorAll("button").forEach((b) => (b.disabled = b.dataset.wasDisabled === "true"));
+    applyGate();
   }
+}
+
+/** fetch wrapper: GET without body, POST JSON (or raw bytes with { raw: true }). */
+async function api(url, body, { raw = false, headers = {} } = {}) {
+  const init = body === undefined ? {} : {
+    method: "POST",
+    headers: { "content-type": raw ? "application/octet-stream" : "application/json", ...headers },
+    body: raw ? body : JSON.stringify(body),
+  };
+  const res = await fetch(url, init);
+  const data = await res.json().catch(() => ({}));
+  return { ok: res.ok, status: res.status, data };
+}
+
+function toBase64(bytes) {
+  let s = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+  return btoa(s);
 }
 
 function setStatus(msg, error = false) {

@@ -14,6 +14,57 @@
     <span id="mode-badge" class="badge muted">…</span>
   </header>
 
+  <section id="version" class="version" aria-live="polite">
+    <p id="version-status" class="status">Checking which version this is…</p>
+
+    <div id="version-known" hidden>
+      <div class="version-head">
+        <strong id="v-title"></strong>
+        <span id="v-matter" class="badge"></span>
+      </div>
+      <p id="v-match" class="muted small-text"></p>
+      <p id="v-warning" class="warn" hidden></p>
+      <dl class="links">
+        <dt>Base</dt><dd><span id="v-base">none</span> <button id="open-base" class="link" hidden>Open base version</button></dd>
+        <dt>Supersedes</dt><dd id="v-supersedes">nothing</dd>
+      </dl>
+      <div id="v-untracked" class="untracked" hidden>
+        <span class="badge alert">⚠ <span id="v-untracked-text"></span></span>
+        <label class="radio"><input type="checkbox" id="ack-untracked" /> I have reviewed the changes made without track changes</label>
+      </div>
+      <details>
+        <summary>Version history</summary>
+        <ol id="v-chain" class="chain"></ol>
+      </details>
+      <ul id="v-flags" class="flags"></ul>
+    </div>
+
+    <div id="version-unknown" hidden>
+      <p class="warn">This document is not registered in any matter.</p>
+      <ul id="u-candidates" class="candidates"></ul>
+      <button id="triage-file">File for a matter decision…</button>
+
+      <form id="triage-form" hidden>
+        <label>Matter
+          <select id="t-matter"></select>
+        </label>
+        <fieldset>
+          <legend>Whose version is this?</legend>
+          <label class="radio"><input type="radio" name="t-side" value="theirs" checked /> Counterparty's</label>
+          <label class="radio"><input type="radio" name="t-side" value="ours" /> Ours</label>
+        </fieldset>
+        <label>Based on
+          <select id="t-base"></select>
+        </label>
+        <ul id="t-flags" class="flags"></ul>
+        <button id="triage-confirm" class="primary" type="submit">Register</button>
+        <p class="muted small-text">Filed as <span id="t-id"></span>. If you close the pane now, it stays in the triage queue.</p>
+      </form>
+    </div>
+
+    <button id="recheck" class="link">Re-check version</button>
+  </section>
+
   <section class="setup">
     <label>Playbook
       <select id="playbook"></select>
@@ -22,7 +73,7 @@
     <fieldset>
       <legend>Counterparty sent</legend>
       <label class="radio"><input type="radio" name="source" value="tracked" checked /> Tracked changes in this document</label>
-      <label class="radio"><input type="radio" name="source" value="compare" /> A clean copy: compare with my last version</label>
+      <label class="radio"><input type="radio" name="source" value="compare" /> A clean copy: compare with <span id="compare-target">my last version</span></label>
       <input type="file" id="baseline" accept=".docx" hidden />
     </fieldset>
 

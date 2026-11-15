@@ -136,14 +136,26 @@ function newerThan(store, matterId, version, side) {
   return store.versions(matterId).some((v) => v.side === side && v.receivedAt > version.receivedAt && !v.renditionOf);
 }
 
-function registerOurs(d, msg, matter, store) {
+/**
+ * A base the lawyer picked (Word triage) overrides text detection, but must be
+ * a version of the other side in the same matter. Disagreement is flagged.
+ */
+function chooseBase(baseId, candidates, best, flags) {
+  if (!baseId) return best;
+  const v = candidates.find((x) => x.id === baseId);
+  if (!v) throw Object.assign(new Error("chosen base is not a version of the other side in this matter"), { status: 400 });
+  if (best && best.versionId !== v.id) flags.push(`Base set to ${v.label} by the user; the text matches ${best.label} better.`);
+  return { versionId: v.id, label: v.label };
+}
+
+function registerOurs(d, msg, matter, store, opts = {}) {
   const flags = [];
   const doc = d.doc;
   const ourVs = store.versions(matter.id).filter((v) => v.side === "ours" && v.status === "active");
   const theirVs = store.versions(matter.id).filter((v) => v.side === "theirs" && v.status === "active");
 
   // our version responds to their latest active version (verified by text)
-  const base = theirVs.length ? rankBases(doc, theirVs).best : null;
+  const base = chooseBase(opts.baseId, theirVs, theirVs.length ? rankBases(doc, theirVs).best : null, flags);
 
   // our own correction: same base, they have not replied yet
   const prev = ourVs.filter((v) => v.baseId === (base?.versionId || null)).sort((a, b) => b.receivedAt.localeCompare(a.receivedAt))[0];
@@ -167,13 +179,13 @@ function registerOurs(d, msg, matter, store) {
   });
   if (supersedes) store.updateVersion(supersedes.id, { status: "superseded", supersededBy: v.id });
   return {
-    name: d.name, outcome: "registered", side: "ours", versionLabel: v.label,
+    name: d.name, outcome: "registered", side: "ours", versionLabel: v.label, versionId: v.id,
     baseLabel: base?.label || null, supersedes: supersedes?.label || null, flags,
     summary: `Our ${v.label} registered${supersedes ? ` (replaces ${supersedes.label})` : ""}.`,
   };
 }
 
-async function registerTheirs(d, msg, matter, intent, ctx) {
+async function registerTheirs(d, msg, matter, intent, ctx, opts = {}) {
   const { store } = ctx;
   const doc = d.doc;
   const flags = [];
@@ -193,8 +205,9 @@ async function registerTheirs(d, msg, matter, intent, ctx) {
   // 2. base = which of OUR versions they worked on
   const ourVs = all.filter((v) => v.side === "ours");
   if (!ourVs.length) flags.push("No version of ours in this matter yet - compared without a base.");
-  const { best: base, ranked, flags: baseFlags } = rankBases(doc, ourVs);
+  const { best: detected, ranked, flags: baseFlags } = rankBases(doc, ourVs);
   flags.push(...baseFlags);
+  const base = chooseBase(opts.baseId, ourVs, detected, flags);
   const baseV = base ? store.version(base.versionId) : null;
 
   // 3. correction of their earlier version? same base and we have not answered
@@ -285,7 +298,7 @@ async function analyse(doc, baseV, supersedes, matter, ctx) {
       if (rank[f.verdict] < rank.human_review) f.verdict = "human_review";
     }
     return {
-      id: u.id, source: u.source, kind: u.kind, section: u.section, before: u.before, after: u.after,
+      id: u.id, source: u.source, kind: u.kind, section: u.section, paragraphIndex: u.paragraphIndex, before: u.before, after: u.after,
       cacheKey: u.cacheKey, status: supersedes ? (prevKeys.has(u.cacheKey) ? "carried_over" : "new") : "new", finding: f,
     };
   });
@@ -300,6 +313,33 @@ async function analyse(doc, baseV, supersedes, matter, ctx) {
       ? { supersededLabel: supersedes.label, newUnits: out.filter((u) => u.status === "new").length, carriedOver: out.filter((u) => u.status === "carried_over").length }
       : null,
   };
+}
+
+/**
+ * Register a document that came from Word, not from an email, after a lawyer
+ * has confirmed matter, side and (optionally) base. Never called automatically.
+ * @param buf   the .docx bytes
+ * @param opts  { matterId, side: "ours"|"theirs", baseId?, fileName? }
+ */
+export async function registerDocument(buf, { matterId, side, baseId, fileName }, ctx) {
+  const { store } = ctx;
+  const matter = store.matter(matterId);
+  if (!matter) throw Object.assign(new Error("unknown matter"), { status: 400 });
+  if (!["ours", "theirs"].includes(side)) throw Object.assign(new Error('side must be "ours" or "theirs"'), { status: 400 });
+  const d = { name: fileName || "from-word.docx", buf };
+  d.hash = store.putBlob("files", buf, ".docx");
+  const known = store.versionByHash(d.hash);
+  if (known) return { outcome: "known_file", versionId: known.id, versionLabel: known.label, matterId: known.matterId };
+  d.doc = await readDocx(buf);
+  const msg = {
+    messageId: `<word-${crypto.randomUUID()}>`, from: null,
+    direction: side === "ours" ? "outbound" : "inbound", date: (ctx.now || new Date()).toISOString(),
+  };
+  const res = side === "ours"
+    ? registerOurs(d, msg, matter, store, { baseId })
+    : await registerTheirs(d, msg, matter, { intent: "new_version" }, ctx, { baseId });
+  store.save();
+  return { ...res, outcome: "registered", matterId: matter.id };
 }
 
 function notify(ctx, text) {

@@ -21,8 +21,10 @@ The counterparty can send their changes as **tracked changes**, or as a **clean 
 
 ```
 manifest.xml                 Office add-in manifest (adds a button on the Review tab)
-server.js                    HTTPS server: task pane, review proxy, intake API, Gmail poller
+server.js                    Starts the HTTPS server and the Gmail poller
+server/app.js                Routes: task pane, review proxy, intake API, version timeline, triage
 server/intake.js             Email -> matter -> version -> base -> integrity check -> review
+server/timeline.js           Which version is open in Word; base / supersedes / newer around it
 server/routing.js            Matter assignment by stamp, thread, subject tag, sender, text
 server/matching.js           Text fingerprints: base detection, renditions
 server/intent.js             "corrected version" / "for signature" detection (DE/EN/PL)
@@ -38,6 +40,7 @@ public/taskpane.html|css|js  Task pane UI + Office.js actions
 public/lib/ooxml.js          Rebuilds before/after text from <w:ins>/<w:del>
 public/lib/diff.js           Paragraph alignment (clean-copy mode), word diff, minimal edit
 public/lib/review.js         Prompt, tool schema, guardrails, validator, mock reviewer
+public/lib/version-view.js   Version panel, "accept all" gate, untracked changes as cards
 playbooks/mutual-nda.json    Sample playbook: 9 rules with preferred / fallback / never
 samples/                     Sample NDA: our v1, counterparty v2 tracked, v2 clean
 tests/                       Unit tests + Office.js stub for browser preview
@@ -52,7 +55,7 @@ Requires Node 18+.
 ```bash
 cd redlining-pal
 npm install
-npm test            # 21 tests should pass
+npm test            # 59 tests should pass
 ```
 
 ### 2. Trust a localhost certificate
@@ -128,6 +131,25 @@ npm run intake -- tests/fixtures/emails/*.eml
 ```
 This prints the timeline: v1 ours, v2 superseded by v2.1 with **1 untracked change** (the fraud carve-out in 4.4 was deleted with tracking off), the clean copy filed as a rendition, and the unknown NDA in triage. Delete `data/` to start over.
 
+### Version panel in Word
+When the task pane opens, it asks the server which registered version the open document is. It shows:
+- the matter and version ("v2.1 · counterparty"), and whether the text matches the registered file exactly or only probably (for example after some changes were already accepted)
+- the **base** (with an **Open base version** button) and what the version **supersedes**
+- a warning if a newer version exists, so nobody reviews an outdated draft
+- a **"changes without track changes"** badge. Those changes appear as review cards, and **Accept all** stays blocked until the lawyer ticks "I have reviewed…". The acknowledgement is stored and audited.
+
+The document is identified by its **text**, not its stamp: the counterparty edits our stamped file, so their versions still carry our stamp. A clean copy starts the review in compare mode against the base from the registry, so no file picker is needed.
+
+If the document is not registered anywhere, the pane offers **File for a matter decision**. The lawyer picks the matter, whose version it is and its base (the best text match is suggested), then confirms. Nothing is registered before that click. If the pane is closed first, the item waits in `/api/triage`.
+
+To see it without Word, load the fixtures into a scratch registry and open the preview on v2.1:
+```bash
+export REDLINE_DATA=/tmp/redline-demo
+npm run intake -- tests/fixtures/emails/*.eml
+PREVIEW=1 HTTP_ONLY=1 npm start
+# open http://localhost:3000/preview.html?doc=spa/spa_v2-1_theirs_corrected.docx
+```
+
 ### Gmail demo, step by step
 
 Use synthetic documents only (the samples in `samples/spa/`), never real client contracts.
@@ -162,8 +184,14 @@ If your own CC copy does not appear under the label, Gmail has hidden a copy add
 | POST | `/api/intake` | Raw email (RFC 822) as body. This is the hook for n8n or Power Automate later. |
 | GET | `/api/matters`, `/api/matters/:id` | Matters and their version graph with analyses |
 | GET | `/api/versions/:id/file` | Download the stored .docx of a version |
-| GET | `/api/triage` | Mails that could not be assigned automatically |
-| POST | `/api/triage/:id/assign` | `{ "matterId": "..." }`. Re-processes the mail for that matter. |
+| GET | `/api/versions/:id/timeline` | Base, supersedes / superseded by, newer version, untracked count. Ids and labels only, no contract text. |
+| GET | `/api/versions/:id/untracked` | Changes made without track changes, as review cards |
+| POST | `/api/versions/:id/ack-untracked` | Record that a lawyer reviewed them (unblocks bulk accept; audited) |
+| POST | `/api/documents/identify` | `{ afterTexts, beforeTexts, stamp }` of the open document → exact / probable / unknown + timeline |
+| POST | `/api/documents/triage` | Unknown .docx as body → triage item (409 if already registered) |
+| GET | `/api/triage` | Mails and documents that could not be assigned automatically |
+| GET | `/api/triage/:id/bases?matterId=&side=` | Suggested bases for a document triage item |
+| POST | `/api/triage/:id/assign` | Mail: `{ "matterId" }`, re-processes the mail. Document: `{ "matterId", "side": "ours" \| "theirs", "baseId"? }`, registers it. |
 
 ## Writing your own playbook
 Add a JSON file to `playbooks/`. Each rule has these fields:
@@ -189,9 +217,10 @@ Intake limits:
 - The registry is a JSON file for a single user. The store interface is where Postgres, SharePoint or a DMS (iManage, NetDocuments) would plug in.
 - Intent detection is rule-based (DE/EN/PL).
 - A version is treated as "replacing" another only when it has the same base and we have not replied yet. If the email does not say it is a correction, the version is flagged for confirmation.
+- The open document is matched by paragraph text. A "probable" match needs 60% of its paragraphs to come from one version. Heavily rewritten drafts, or two matters on the same template, may need the lawyer to confirm. Close matches are flagged.
+- The untracked-changes acknowledgement records when, not who: the prototype has no user accounts.
 
 ## Next steps (ideas)
-- Version timeline and "open base version" button in the task pane
 - "Reopened" flag: the counterparty changes a clause that was agreed in an earlier round
 - LLM intent classification behind the rules (output limited to the same enum)
 - n8n or Power Automate flow posting to `/api/intake`, as an alternative to the poller

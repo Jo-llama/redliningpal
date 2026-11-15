@@ -14,26 +14,41 @@ never add real client contracts, names or emails.
   - `ooxml.js`: rebuild before/after text from <w:ins>/<w:del>; one review unit per paragraph
   - `diff.js`: paragraph alignment (clean-copy compare), word diff, minimal edit
   - `review.js`: prompt, forced tool schema `report_findings`, guardrails, `validateFindings`, mock reviewer
-- Server (`server.js`, Express, HTTPS via office-addin-dev-certs; `HTTP_ONLY=1` for tests):
+  - `version-view.js`: version panel view model, "accept all" gate, untracked units -> review cards
+- Server: `server.js` only starts it (HTTPS via office-addin-dev-certs; `HTTP_ONLY=1` for tests) and the
+  Gmail poller. Routes live in `server/app.js` as `createApp(ctx, { root, preview, audit })`; tests drive
+  it over HTTP with an injected `audit` (`tests/api.test.js`).
   - `/api/review`: Claude proxy (key stays server-side), mock mode without `ANTHROPIC_API_KEY`
   - `/api/intake`: raw RFC 822 email -> `server/intake.js`
-  - `/api/matters`, `/api/triage`
+  - `/api/matters`, `/api/triage` (+ `/:id/assign`, `/:id/bases`)
+  - `/api/documents/identify` (pane sends paragraph texts + stamp), `/api/documents/triage` (unknown .docx)
+  - `/api/versions/:id/{file,timeline,untracked,ack-untracked}`
 - Intake pipeline (`server/`): `routing.js` (matter scoring: stamp, thread, subject tag, sender,
   text match; triage below threshold), `matching.js` (base detection by text, renditions),
   `intent.js` (corrected / for signature, DE/EN/PL rules), `store.js` (JSON registry +
   content-addressed blobs in `data/`), `docx.js` (rc-ver stamp in docProps/custom.xml),
-  `gmail-poller.js` (IMAP on a Gmail label), `review-service.js`
+  `gmail-poller.js` (IMAP on a Gmail label), `review-service.js`,
+  `timeline.js` (which version is open in Word; timeline around a version)
 - Version graph: `baseId` (which of OUR versions they worked on) and `supersedesId`
   (corrected version) are separate links. Corrections are compared with the base,
   not the superseded version. Integrity check: "reject all" of their file must equal our base.
+- Identifying the open document is by TEXT (coverage of its paragraphs, Jaccard as tie-breaker),
+  never by stamp: their files keep OUR stamp (`docStamp`). Stamp only breaks ties.
+- Word task pane: version panel (base, supersedes, newer-version warning, "Open base version"),
+  untracked changes as cards; bulk accept is blocked until the untracked changes are acknowledged
+  (`untrackedAck` on the version, audited, final). Review mode follows the OPEN document.
+- Unknown document from Word: triage item `kind: "document"`; registered only after a lawyer
+  confirms matter, side and base (`registerDocument` in intake.js). Never automatic.
 - Playbooks: `playbooks/*.json` (`mutual-nda`, `spa-share-deal`). Samples: `samples/`, `samples/spa/`.
   Email fixtures: `tests/fixtures/emails/`.
 
 ## Commands
-- `npm test`: node:test, must stay green (21 tests)
+- `npm test`: node:test, must stay green (59 tests)
 - `npm run intake -- tests/fixtures/emails/*.eml`: run intake and print the matter timeline (delete `data/` to reset)
 - `npm run fixtures`: regenerate SPA samples + .eml fixtures (Python, python-docx)
 - `npm start`: HTTPS server on :3000. `PREVIEW=1 HTTP_ONLY=1 npm start` + `/preview.html` = task pane without Word
+  (`?doc=spa/spa_v2-1_theirs_corrected.docx` after running intake shows the version panel; use
+  `REDLINE_DATA=<tmp dir>` for both to keep `data/` clean)
 - `npm run stamp -- in.docx`: stamp an outgoing draft
 
 ## Principles
