@@ -12,7 +12,8 @@
     "stamp": "node scripts/stamp.js",
     "intake": "node scripts/intake.js",
     "fixtures": "python3 samples/make_spa.py && python3 tests/fixtures/make_emails.py",
-    "gdocs:build": "node scripts/build-gdocs.js"
+    "gdocs:build": "node scripts/build-gdocs.js",
+    "gdocs:push": "npm run gdocs:build && cd gdocs && clasp push --force"
   },
   "dependencies": {
     "express": "^4.21.2",
@@ -21,7 +22,9 @@
     "mailparser": "^3.14.3"
   },
   "devDependencies": {
+    "@google/clasp": "^3.4.1",
     "@xmldom/xmldom": "^0.9.5",
+    "jsdom": "^31.0.1",
     "office-addin-dev-certs": "^1.13.5"
   }
 }

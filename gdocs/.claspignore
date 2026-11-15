@@ -1,0 +1,6 @@
+# clasp pushes only the add-on files (npm run gdocs:push)
+**/**
+!Code.gs
+!Sidebar.html
+!VersionView.html
+!appsscript.json
