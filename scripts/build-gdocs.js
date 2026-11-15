@@ -19,7 +19,7 @@ function fn(file, name) {
 }
 
 // diff.js helpers the sidebar uses directly (suggestionEdit and what it calls)
-const DIFF = ["wordDiff", "minimalEdit", "slideToWordStart", "suggestionEdit"];
+const DIFF = ["groupChanges", "wordDiff", "minimalEdit", "slideToWordStart", "suggestionEdit"];
 
 export function buildVersionView() {
   const view = readFileSync(new URL("public/lib/version-view.js", root), "utf8");

@@ -130,6 +130,35 @@ export function wordDiff(before, after) {
     else if (i < n && (j >= m || dp[i + 1][j] >= dp[i][j + 1])) { push("-", a[i]); i++; }
     else { push("+", b[j]); j++; }
   }
+  return groupChanges(out);
+}
+
+/**
+ * Readable diff: each changed phrase as all its deleted words, then all its inserted words
+ * ("from the first euro" -> "only for the excess", not "from|only the|for ...").
+ * Only spaces between changes are absorbed into the phrase; a shared word ends it.
+ */
+function groupChanges(parts) {
+  const out = [];
+  let i = 0;
+  while (i < parts.length) {
+    if (parts[i].op === "=") { out.push(parts[i++]); continue; }
+    let end = i;   // last changed part of this phrase
+    for (let k = i; k < parts.length; k++) {
+      if (parts[k].op !== "=") end = k;
+      else if (/\S/.test(parts[k].text)) break;
+    }
+    const phrase = parts.slice(i, end + 1);
+    i = end + 1;
+    // a pure deletion or insertion is not interleaved: keep it as it is
+    if (!phrase.some((p) => p.op === "-") || !phrase.some((p) => p.op === "+")) { out.push(...phrase); continue; }
+    let del = "", ins = "";
+    for (const p of phrase) {
+      if (p.op !== "+") del += p.text;
+      if (p.op !== "-") ins += p.text;
+    }
+    out.push({ op: "-", text: del }, { op: "+", text: ins });
+  }
   return out;
 }
 

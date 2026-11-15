@@ -117,17 +117,17 @@ const unit = (id, verdict, state, extra = {}) => ({
 });
 const findingsRes = (units, extra = {}) => ({ playbook: "spa-share-deal@2026-11", mode: "mock", model: null, reviewedAt: "2026-11-12T10:00:00Z", units, ...extra });
 
-test("review cards: reject first, untracked left out, summary and progress", () => {
+test("review cards: document order (verdict is a badge), untracked left out, summary and progress", () => {
   const rv = reviewCards(findingsRes([
     unit("U1", "negotiate", "open"), unit("U2", "accept", "accepted"), unit("U3", "reject", "open"),
     unit("U4", "human_review", "changed"), unit("U5", "reject", "open", { source: "untracked" }),
   ]));
-  assert.deepEqual(rv.cards.map((c) => c.id), ["U3", "U4", "U1", "U2"]);
+  assert.deepEqual(rv.cards.map((c) => c.id), ["U1", "U2", "U3", "U4"], "clause order, as in the document");
   assert.equal(rv.summary, "4 changes · 1 reject · 1 human review · 1 negotiate · 1 accept");
   assert.equal(rv.progress, "1 of 4 handled");
   assert.equal(rv.source, "Playbook spa-share-deal@2026-11, mock reviewer, 2026-11-12");
   assert.equal(rv.allHandled, false);
-  assert.equal(rv.cards[1].stateText, "Changed since the review: check by hand");
+  assert.equal(rv.cards[3].stateText, "Changed since the review: check by hand");
   assert.equal(reviewCards(findingsRes([], { mode: "live", model: "claude-sonnet-5-5" })).summary, "No changes to review.");
   assert.match(reviewCards(findingsRes([unit("U1", "accept", "open")], { mode: "live", model: "claude-sonnet-5-5" })).source, /claude-sonnet-5-5/);
 });
@@ -151,6 +151,20 @@ test("review cards: steps per verdict; a counter-proposal is 'reject, then the m
   assert.match(by.H.steps[0], /^Decide yourself/);
   assert.deepEqual(by.D.steps, [], "handled: nothing to do");
   assert.equal(by.D.handled, true);
-  assert.deepEqual(by.N.goTo, [unit().after, unit().before]);
+  assert.deepEqual(by.N.goTo, [unit().after, unit().before, "4.1 not liable for claims below EUR"], "then the unchanged start");
+  assert.equal(by.N.goToExact, 2);
   assert.deepEqual(by.N.diff.filter((p) => p.op !== "=").map((p) => p.op + p.text), ["-25,000.", "+100,000."]);
+});
+
+test("review cards: Go to falls back to the words their change did not touch", () => {
+  const card = (before, after) => reviewCards(findingsRes([{ ...unit("X", "negotiate", "open"), before, after }])).cards[0];
+  const c81 = card(
+    "8.1 For three (3) years after the Closing Date, the Seller shall not compete with the business of the Company.",
+    "8.1 For two (2) years after the Closing Date, the Seller shall not compete with the business of the Company.");
+  assert.deepEqual(c81.goTo.slice(2), ["years after the Closing Date, the Seller shall not compete with the business of the Company."],
+    "the unchanged end; the start \"8.1 For\" is too short to be safe");
+  assert.equal(c81.goToExact, 2);
+  assert.deepEqual(card("The Seller is liable.", "The Buyer is liable.").goTo, ["The Buyer is liable.", "The Seller is liable."], "too short to be safe: no anchors");
+  assert.deepEqual(card("", "9.2 New clause.").goTo, ["9.2 New clause."], "insertion: only their text");
+  assert.equal(card("", "9.2 New clause.").goToExact, 1);
 });

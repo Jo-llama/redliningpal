@@ -214,8 +214,10 @@ test("sidebar: unknown document -> triage; their version cannot be registered wi
     ...configured,
     identifyOpenDoc: () => (identified++ ? v21() : { status: "unknown", flags: [], timeline: null, candidates: [{ matterId: "SPA-Polaris", label: "v1", score: 0.12 }] }),
     getUntracked: () => untrackedCards,
-    sendToTriage: () => ({ triageId: "T-1", candidates: [], matters: [{ id: "SPA-Nordlicht", title: `Nordlicht ${XSS}` }] }),
-    getTriageBases: (_t, _m, side) => ({ bases: side === "theirs" ? [] : [{ versionId: "id-v21", label: "v2.1", coverage: 0.97 }], flags: [] }),
+    sendToTriage: () => ({ triageId: "T-1", candidates: [], matters: [{ id: "SPA-Nordlicht", title: `Nordlicht ${XSS}` }, { id: "SPA-Polaris", title: "Polaris" }] }),
+    getTriageBases: (_t, m, side) => side === "ours" ? { bases: [{ versionId: "id-v21", label: "v2.1", coverage: 0.97 }], flags: [] }
+      : m === "SPA-Polaris" ? { bases: [], flags: [] }
+      : { bases: [{ versionId: "id-v1", label: "v1", coverage: 0.03 }], flags: [`Weak base match (0.03); please confirm the base version. ${XSS}`] },
     assignTriage: () => ({ versionId: "id-v3" }),
   });
   await s();
@@ -227,9 +229,19 @@ test("sidebar: unknown document -> triage; their version cannot be registered wi
   assert.equal(window.document.querySelectorAll("img").length, 0, "matter title shown as text");
 
   const pick = (id, value) => { $(id).value = value; $(id).dispatchEvent(new window.Event("change")); };
-  pick("tMatter", "SPA-Nordlicht");
+  pick("tMatter", "SPA-Polaris");
   pick("tSide", "theirs");
   await s();
+  assert.ok(visible($("tNoBase")), "no version of ours in this matter: says why");
+  assert.ok($("tConfirm").disabled && $("tBase").disabled);
+
+  pick("tMatter", "SPA-Nordlicht");
+  await s();
+  assert.ok(!visible($("tNoBase")));
+  assert.equal($("tBase").value, "id-v1", "best base preselected");
+  assert.match($("tFlags").textContent, /^Weak base match \(0\.03\)/);
+  assert.equal(window.document.querySelectorAll("img").length, 0, "flags shown as text");
+  pick("tBase", "");
   $("tConfirm").click();
   await s();
   assert.match($("status").textContent, /Choose the base/);
@@ -282,7 +294,7 @@ const reviewUnit = (id, verdict, state, extra = {}) => ({
 });
 const findingsRes = (units) => ({ versionId: "id-v21", playbook: "spa-share-deal@2026-11", mode: "mock", model: null, reviewedAt: "2026-11-12T10:00:00Z", units });
 
-test("review: summary, progress, reject first; handled hidden until 'Show handled'", async () => {
+test("review: summary, progress, document order with verdict badges; handled hidden until 'Show handled'", async () => {
   const { $, window, settle: s } = await open({
     ...configured, identifyOpenDoc: () => v21(), getUntracked: () => untrackedCards,
     getFindings: () => findingsRes([
@@ -296,11 +308,12 @@ test("review: summary, progress, reject first; handled hidden until 'Show handle
   assert.equal($("reviewProgress").textContent, "1 of 3 handled");
   assert.match($("reviewSource").textContent, /^Playbook spa-share-deal@2026-11, mock reviewer/);
   const heads = () => [...$("reviewCards").querySelectorAll(".card .verdict")].map((n) => n.textContent.split(" ")[0]);
-  assert.deepEqual(heads(), ["reject", "negotiate"]);
+  assert.deepEqual(heads(), ["negotiate", "reject"]);
+  assert.equal($("reviewCards").querySelector(".card.c-reject .verdict b").textContent, "reject");
   assert.match($("reviewCards").textContent, /1 handled change hidden\./);
   $("showHandled").checked = true;
   $("showHandled").dispatchEvent(new window.Event("change"));
-  assert.deepEqual(heads(), ["reject", "negotiate", "accept"]);
+  assert.deepEqual(heads(), ["negotiate", "reject", "accept"]);
   assert.match($("reviewCards").textContent, /Accepted/);
 });
 
@@ -349,4 +362,29 @@ test("review: refresh asks again; server text in a card is never HTML; errors ar
     getFindings: () => { throw new Error("Exception: Server error: not a readable .docx"); } });
   await failing.settle();
   assert.equal(failing.$("reviewCards").textContent, "Server error: not a readable .docx");
+});
+
+test("review card: with their suggestion open, Go to lands on the unchanged part and says so", async () => {
+  const { $, calls, settle: s } = await open({
+    ...configured, identifyOpenDoc: () => v21(), getUntracked: () => untrackedCards,
+    getFindings: () => findingsRes([reviewUnit("U1", "negotiate", "open")]),
+    goToText: (t) => t === "4.1 claims below EUR", placeSuggestion: () => true,
+  });
+  await s();
+  const card = $("reviewCards").querySelector(".card");
+  card.querySelector("button").click();
+  await s();
+  assert.deepEqual(calls.filter((c) => c[0] === "goToText").map((c) => c[1]),
+    ["4.1 claims below EUR 100,000.", "4.1 claims below EUR 25,000.", "4.1 claims below EUR"]);
+  assert.match(card.textContent, /Jumped to the unchanged part of the clause\./);
+});
+
+test("review: hidden for a version with nothing to review (our own draft)", async () => {
+  const { $, settle: s } = await open({
+    ...configured, identifyOpenDoc: () => v21(), getUntracked: () => untrackedCards,
+    getFindings: () => findingsRes([]),
+  });
+  await s();
+  assert.ok(visible($("panel")));
+  assert.ok(!visible($("review")));
 });

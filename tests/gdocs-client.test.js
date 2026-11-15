@@ -385,7 +385,7 @@ test("findings: exports the Doc and posts it for the version; invalid ids are re
   assert.equal(calls.length, 2);
 });
 
-test("end to end: v2.1 in Google Docs -> 12 playbook cards, all open, reject first", () => {
+test("end to end: v2.1 in Google Docs -> 12 playbook cards, all open, in clause order", () => {
   const fake = "https://tunnel.test";
   const v21 = sample("spa/spa_v2-1_theirs_corrected.docx");
   const { gs } = load((url, p) => exportOf(v21)(url) || syncFetch(url.replace(fake, baseUrl), p), { ...configured, RP_SERVER_URL: fake });
@@ -393,6 +393,7 @@ test("end to end: v2.1 in Google Docs -> 12 playbook cards, all open, reject fir
   const rv = reviewCards(structuredClone(gs.getFindings(id)));
   assert.equal(rv.cards.length, 12, "the untracked change has its own section");
   assert.equal(rv.progress, "0 of 12 handled");
-  assert.equal(rv.cards[0].verdict, "reject");
+  assert.deepEqual(rv.cards.map((c) => c.title.split(".")[0]), ["2", "3", "3", "4", "4", "4", "5", "6", "7", "8", "9", "10"]);
+  assert.deepEqual(rv.cards.filter((c) => c.verdict === "reject").map((c) => c.title.split(".")[0]), ["4", "9", "10"]);
   assert.match(rv.source, /^Playbook spa-share-deal@.*mock reviewer/);
 });

@@ -117,6 +117,18 @@ test("wordDiff marks insertions and deletions", () => {
   assert.ok(d.some((s) => s.op === "+" && s.text.includes("England")));
 });
 
+test("wordDiff groups a changed phrase: all deleted words, then all inserted words", () => {
+  const show = (d) => d.map((p) => (p.op === "=" ? p.text : `[${p.op}${p.text}]`)).join("");
+  const b = "in which case the Seller is liable from the first euro.";
+  const a = "in which case the Seller is liable only for the excess.";
+  const d = wordDiff(b, a);
+  assert.equal(d.map((p) => (p.op === "+" ? "" : p.text)).join(""), b, "deleted + shared = before");
+  assert.equal(d.map((p) => (p.op === "-" ? "" : p.text)).join(""), a, "inserted + shared = after");
+  for (let k = 1; k < d.length; k++) assert.ok(!(d[k - 1].op === "+" && d[k].op === "-"), `no insertion before a deletion: ${show(d)}`);
+  assert.equal(show(wordDiff("For three (3) years", "For two (2) years")), "For [-three (3)][+two (2)] years");
+  assert.equal(show(wordDiff("a b c d", "a d")), "a [-b c ]d", "pure deletion unchanged");
+});
+
 // ---- suggestionEdit: the smallest suggestion a lawyer applies by hand (Google Docs)
 
 test("suggestionEdit: a deleted 'or fraud' becomes an insertion between 'intent' and '.'", () => {
