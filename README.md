@@ -1,4 +1,4 @@
-# redliningPal
+# RedliningPal
 
 **Your companion for contract negotiations.** redliningPal tracks every version the counterparty sends, compares it with the right version of yours, checks each change against your negotiation playbook, and lets you approve, reject or counter it directly in Word.
 
