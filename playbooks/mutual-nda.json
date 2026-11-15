@@ -1,0 +1,97 @@
+{
+  "id": "mutual-nda",
+  "version": "2026-11",
+  "contractType": "Mutual Non-Disclosure Agreement",
+  "party": "Lumen Analytics GmbH (our client)",
+  "rules": [
+    {
+      "id": "NDA-01",
+      "topic": "Definition of Confidential Information",
+      "preferred": "Covers information in any form (written, oral, visual) that is marked confidential or would reasonably be understood to be confidential.",
+      "fallback": "Written information marked confidential, plus oral information identified as confidential at disclosure and confirmed in writing within 30 days.",
+      "never": "Only written information that is marked confidential.",
+      "guidance": "Narrowing the definition removes protection for demos and calls, which is where most of our disclosures happen.",
+      "keywords": ["confidential information\" means", "means all information", "orally", "marked"]
+    },
+    {
+      "id": "NDA-02",
+      "topic": "Exclusions from Confidential Information",
+      "preferred": "The four standard exclusions only: public without breach, previously known, received from a third party without restriction, independently developed.",
+      "fallback": null,
+      "never": "Any exclusion beyond the four standard ones.",
+      "guidance": "Extra exclusions are usually residuals clauses in disguise.",
+      "keywords": ["does not include", "exclusion"]
+    },
+    {
+      "id": "NDA-03",
+      "topic": "Duration of confidentiality obligations",
+      "preferred": "Five years after the last disclosure; trade secrets protected for as long as they remain trade secrets.",
+      "fallback": "Three years after the last disclosure, trade secret carve-out must stay.",
+      "never": "Less than three years, or deleting the trade secret carve-out.",
+      "guidance": "The trade secret carve-out matters for protection under the German GeschGehG.",
+      "keywords": ["years", "trade secret", "continue for"]
+    },
+    {
+      "id": "NDA-04",
+      "topic": "Residuals clause",
+      "preferred": "No residuals clause.",
+      "fallback": null,
+      "never": "Any right to use information retained in unaided memory.",
+      "guidance": "A residuals clause effectively licenses our know-how. Red line.",
+      "keywords": ["residual", "memory"],
+      "redFlags": ["residual", "unaided memory"],
+      "redFlagVerdict": "reject"
+    },
+    {
+      "id": "NDA-05",
+      "topic": "Non-solicitation",
+      "preferred": "No non-solicitation or no-hire obligations in an NDA.",
+      "fallback": null,
+      "never": "Any non-solicitation or no-hire clause.",
+      "guidance": "Out of scope for an NDA; no-hire clauses also raise employment and competition law issues.",
+      "keywords": ["solicit", "employ", "hire"],
+      "redFlags": ["solicit", "no-hire", "not employ", "or employ"],
+      "redFlagVerdict": "reject"
+    },
+    {
+      "id": "NDA-06",
+      "topic": "Liability",
+      "preferred": "No cap on liability for breach of confidentiality.",
+      "fallback": "Cap at the higher of EUR 250,000 or the contract value, excluding intent and gross negligence.",
+      "never": "A cap below EUR 250,000 or an exclusion of liability for breach of confidentiality.",
+      "guidance": "Under German law, liability for intent cannot be excluded in advance (§ 276(3) BGB).",
+      "keywords": ["liability", "liable", "damages"],
+      "redFlags": ["in no event", "aggregate liability", "shall not be liable"],
+      "redFlagVerdict": "human_review"
+    },
+    {
+      "id": "NDA-07",
+      "topic": "Governing law and jurisdiction",
+      "preferred": "German law; exclusive jurisdiction of the courts of Berlin.",
+      "fallback": "German law; DIS arbitration seated in Frankfurt am Main.",
+      "never": "Non-German governing law.",
+      "guidance": "Our client has no capacity to litigate abroad.",
+      "keywords": ["governed by", "law", "courts", "jurisdiction"],
+      "redFlags": ["laws of england", "laws of the state of", "new york", "delaware"],
+      "redFlagVerdict": "negotiate"
+    },
+    {
+      "id": "NDA-08",
+      "topic": "Return and destruction",
+      "preferred": "Return or destroy within 14 days of request and confirm in writing.",
+      "fallback": "Within 30 days; copies in automatic backups may be kept if they stay confidential until deleted in the ordinary course.",
+      "never": "No obligation to confirm destruction.",
+      "guidance": "Backup carve-outs are market standard if the confidentiality obligation continues.",
+      "keywords": ["return", "destroy", "backup"]
+    },
+    {
+      "id": "NDA-09",
+      "topic": "Remedies",
+      "preferred": "Express right to seek injunctive relief.",
+      "fallback": null,
+      "never": "Deleting the injunctive relief clause.",
+      "guidance": "Interim injunctions (einstweilige Verfügung) are the only remedy that works fast enough.",
+      "keywords": ["injunctive", "remedy", "remedies"]
+    }
+  ]
+}

@@ -1,0 +1,118 @@
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import JSZip from "jszip";
+import { DOMParser } from "@xmldom/xmldom";
+
+import { parseParagraphs, unitsFromTrackedChanges } from "../public/lib/ooxml.js";
+import { diffParagraphs, attachSections, similarity } from "../public/lib/diff.js";
+import { validateFindings, mockReview, guardrailHits } from "../public/lib/review.js";
+
+const playbook = JSON.parse(readFileSync(new URL("../playbooks/mutual-nda.json", import.meta.url)));
+
+async function docXml(name) {
+  const buf = readFileSync(new URL(`../samples/${name}`, import.meta.url));
+  const zip = await JSZip.loadAsync(buf);
+  return zip.file("word/document.xml").async("string");
+}
+
+test("tracked changes: reconstructs before/after per paragraph", async () => {
+  const paras = parseParagraphs(await docXml("nda_v2_counterparty_tracked.docx"), DOMParser);
+  const units = unitsFromTrackedChanges(paras);
+  const byStart = (s) => units.find((u) => (u.after || u.before).startsWith(s));
+
+  assert.equal(units.length, 9);
+  assert.match(byStart("1.1").before, /parties wish to evaluate/);
+  assert.match(byStart("1.1").after, /parties intend to evaluate/);
+  assert.match(byStart("5.1").after, /two \(2\) years after the last disclosure\.$/);
+  assert.match(byStart("5.1").before, /trade secrets/);
+  assert.equal(byStart("7.2").kind, "inserted");
+  assert.equal(byStart("9. Non").kind, "inserted");
+  assert.deepEqual(byStart("8.1").authors, ["Northwind Legal"]);
+});
+
+test("compare mode: clean v2 vs our v1 yields the same changes", async () => {
+  const v1 = parseParagraphs(await docXml("nda_v1_ours.docx"), DOMParser).map((p) => p.after);
+  const v2 = parseParagraphs(await docXml("nda_v2_counterparty_clean.docx"), DOMParser).map((p) => p.after);
+  const units = diffParagraphs(v1, v2);
+
+  assert.equal(units.length, 9);
+  assert.equal(units.filter((u) => u.kind === "inserted").length, 3);
+  assert.equal(units.filter((u) => u.kind === "modified").length, 6);
+  for (const u of units) assert.equal(v2[u.paragraphIndex].replace(/\s+/g, " ").trim(), u.after);
+});
+
+test("compare mode: deleted paragraph is reported and anchored", () => {
+  const units = diffParagraphs(["A one", "B two three", "C four"], ["A one", "C four"]);
+  assert.equal(units.length, 1);
+  assert.equal(units[0].kind, "deleted");
+  assert.equal(units[0].before, "B two three");
+  assert.equal(units[0].paragraphIndex, 1);
+});
+
+test("sections attach to nearest heading", async () => {
+  const paras = parseParagraphs(await docXml("nda_v2_counterparty_tracked.docx"), DOMParser);
+  const units = attachSections(unitsFromTrackedChanges(paras), paras.map((p) => p.after));
+  assert.equal(units.find((u) => u.after.startsWith("5.1")).section, "5. Term");
+});
+
+test("guardrails catch red flags only in added text", () => {
+  const residuals = { before: "x (d) independent.", after: "x (d) independent, or (e) retained in the unaided memory (residuals)." };
+  assert.deepEqual(guardrailHits(playbook, residuals).map((h) => h.ruleId), ["NDA-04"]);
+  // the counterparty *removing* a residuals clause must not trigger
+  assert.equal(guardrailHits(playbook, { before: residuals.after, after: residuals.before }).length, 0);
+});
+
+test("validator: fills gaps, drops junk, guardrails only escalate", () => {
+  const units = [
+    { id: "U1", before: "a", after: "b" },
+    { id: "U2", before: "", after: "Neither party shall solicit or employ any employee." },
+    { id: "U3", before: "x", after: "y" },
+  ];
+  const raw = {
+    findings: [
+      { unit_id: "U1", verdict: "accept", risk: "low", rule_ids: ["NDA-99"], rationale: "ok", counter_proposal: null, comment: "" },
+      { unit_id: "U2", verdict: "accept", risk: "low", rule_ids: [], rationale: "fine", counter_proposal: null, comment: "" },
+      { unit_id: "U2", verdict: "reject", risk: "high", rule_ids: [], rationale: "dupe", counter_proposal: null, comment: "" },
+      { unit_id: "U9", verdict: "reject", risk: "high", rule_ids: [], rationale: "ghost", counter_proposal: null, comment: "" },
+    ],
+  };
+  const { findings, issues } = validateFindings(raw, units, playbook);
+  assert.equal(findings.length, 3);
+  assert.deepEqual(findings[0].ruleIds, []);           // unknown rule removed
+  assert.equal(findings[1].verdict, "reject");          // escalated by NDA-05 red flag
+  assert.ok(findings[1].ruleIds.includes("NDA-05"));
+  assert.equal(findings[2].verdict, "human_review");    // missing -> human review
+  assert.ok(issues.some((i) => i.includes("unknown unit U9")));
+  assert.ok(issues.some((i) => i.includes("duplicate")));
+});
+
+test("mock reviewer produces a valid finding for every sample change", async () => {
+  const paras = parseParagraphs(await docXml("nda_v2_counterparty_tracked.docx"), DOMParser);
+  const units = attachSections(unitsFromTrackedChanges(paras), paras.map((p) => p.after));
+  const { findings, issues } = validateFindings(mockReview(playbook, units), units, playbook);
+  assert.equal(findings.length, units.length);
+  assert.equal(issues.filter((i) => i.includes("no finding")).length, 0);
+  const verdictFor = (s) => findings[units.findIndex((u) => u.after.startsWith(s))].verdict;
+  assert.equal(verdictFor("3.1"), "reject");  // residuals
+  assert.equal(verdictFor("9.1"), "reject");  // non-solicit
+});
+
+test("similarity sanity", () => {
+  assert.ok(similarity("The term is five years", "The term is two years") > 0.6);
+  assert.ok(similarity("Governing law", "Non-solicitation of staff") < 0.2);
+});
+
+import { wordDiff, minimalEdit } from "../public/lib/diff.js";
+
+test("minimalEdit keeps shared prefix/suffix", () => {
+  const e = minimalEdit("continue for five (5) years after", "continue for three (3) years after");
+  assert.equal(e.oldMiddle, "five (5)");
+  assert.equal(e.newMiddle, "three (3)");
+});
+
+test("wordDiff marks insertions and deletions", () => {
+  const d = wordDiff("governed by German law.", "governed by the laws of England.");
+  assert.ok(d.some((s) => s.op === "-" && s.text.includes("German")));
+  assert.ok(d.some((s) => s.op === "+" && s.text.includes("England")));
+});

@@ -1,0 +1,30 @@
+{
+  "name": "redlining-pal",
+  "version": "0.1.0",
+  "description": "Your companion for contract negotiations: tracks every version from the counterparty, checks their changes against your playbook, and lets you approve, reject or counter them in Word.",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "certs": "office-addin-dev-certs install",
+    "start": "node server.js",
+    "test": "node --test tests/*.test.js",
+    "samples": "python3 samples/make_samples.py samples && python3 samples/make_spa.py",
+    "stamp": "node scripts/stamp.js",
+    "intake": "node scripts/intake.js",
+    "fixtures": "python3 samples/make_spa.py && python3 tests/fixtures/make_emails.py",
+    "gdocs:build": "node scripts/build-gdocs.js",
+    "gdocs:push": "npm run gdocs:build && cd gdocs && clasp push --force"
+  },
+  "dependencies": {
+    "express": "^4.21.2",
+    "imapflow": "^2.11.0",
+    "jszip": "^3.10.1",
+    "mailparser": "^3.14.3"
+  },
+  "devDependencies": {
+    "@google/clasp": "^3.4.1",
+    "@xmldom/xmldom": "^0.9.5",
+    "jsdom": "^31.0.1",
+    "office-addin-dev-certs": "^1.13.5"
+  }
+}

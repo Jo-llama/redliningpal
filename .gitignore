@@ -1,0 +1,9 @@
+node_modules/
+*.log
+data/
+config/intake.json
+.env
+
+# clasp: account-specific script id and credentials
+gdocs/.clasp.json
+.clasprc.json
