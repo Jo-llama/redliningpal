@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>redliningPal</title>
+  <script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
+  <script src="/vendor/jszip/jszip.min.js"></script>
+  <link rel="stylesheet" href="taskpane.css" />
+</head>
+<body>
+  <header>
+    <h1>redliningPal</h1>
+    <span id="mode-badge" class="badge muted">…</span>
+  </header>
+
+  <section class="setup">
+    <label>Playbook
+      <select id="playbook"></select>
+    </label>
+
+    <fieldset>
+      <legend>Counterparty sent</legend>
+      <label class="radio"><input type="radio" name="source" value="tracked" checked /> Tracked changes in this document</label>
+      <label class="radio"><input type="radio" name="source" value="compare" /> A clean copy: compare with my last version</label>
+      <input type="file" id="baseline" accept=".docx" hidden />
+    </fieldset>
+
+    <button id="scan" class="primary">Scan &amp; review</button>
+    <p id="status" class="status"></p>
+  </section>
+
+  <section id="summary" hidden>
+    <div class="counts" id="counts"></div>
+    <div class="bulk">
+      <button id="accept-ok" title="Accept every change the review marked as acceptable">Accept all "accept"</button>
+      <button id="comment-all" title="Insert the suggested comment on every reject / negotiate finding">Comment all open</button>
+    </div>
+    <details id="issues-box" hidden>
+      <summary>Harness notes (<span id="issues-count"></span>)</summary>
+      <ul id="issues"></ul>
+    </details>
+  </section>
+
+  <section id="cards"></section>
+
+  <footer>Suggestions only. A lawyer decides. Contract text is sent to the configured model.</footer>
+
+  <template id="card-tpl">
+    <article class="card">
+      <div class="card-head">
+        <span class="verdict"></span>
+        <span class="risk"></span>
+        <span class="section"></span>
+        <span class="done-tag" hidden>done</span>
+      </div>
+      <p class="diff"></p>
+      <p class="rationale"></p>
+      <p class="rules"></p>
+      <ul class="flags"></ul>
+      <label class="small">Counter-proposal (full paragraph)
+        <textarea class="counter" rows="3"></textarea>
+      </label>
+      <label class="small">Comment to counterparty
+        <textarea class="comment" rows="2"></textarea>
+      </label>
+      <div class="actions">
+        <button data-act="goto">Go to</button>
+        <button data-act="accept">Accept</button>
+        <button data-act="reject">Reject</button>
+        <button data-act="comment">Comment</button>
+        <button data-act="counter" class="primary">Counter-propose</button>
+      </div>
+    </article>
+  </template>
+
+  <script type="module" src="taskpane.js"></script>
+</body>
+</html>

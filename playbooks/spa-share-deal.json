@@ -1,0 +1,180 @@
+{
+  "id": "spa-share-deal",
+  "version": "2026-11",
+  "contractType": "Share Purchase Agreement (GmbH share deal, German law)",
+  "party": "Halden Capital Partners GmbH (Buyer, our client)",
+  "rules": [
+    {
+      "id": "SPA-01",
+      "topic": "Leakage protection (locked box)",
+      "preferred": "Seller pays back any Leakage between Locked Box Date and Closing, euro for euro, without notice period.",
+      "fallback": "Buyer must notify Leakage within six (6) months after Closing.",
+      "never": "A notice period shorter than six months, or a cap on leakage claims.",
+      "guidance": "Leakage is the core price protection in a locked box deal.",
+      "keywords": [
+        "leakage",
+        "locked box"
+      ]
+    },
+    {
+      "id": "SPA-02",
+      "topic": "Warranty timing",
+      "preferred": "Warranties given at Signing and repeated at Closing.",
+      "fallback": "Repeated at Closing only for title, capacity and the fundamental warranties.",
+      "never": "Warranties given at Signing only, with no bring-down at Closing.",
+      "guidance": "Without bring-down the Buyer bears all risk between Signing and Closing.",
+      "keywords": [
+        "signing date",
+        "warrants",
+        "warranties"
+      ]
+    },
+    {
+      "id": "SPA-03",
+      "topic": "Seller's knowledge",
+      "preferred": "Actual knowledge of the managing directors plus what they would have known after due enquiry (constructive knowledge).",
+      "fallback": "Actual knowledge of named individuals after due enquiry of their direct reports.",
+      "never": "Actual knowledge only, without any enquiry duty.",
+      "guidance": "Pure actual knowledge rewards the Seller for not asking.",
+      "keywords": [
+        "knowledge",
+        "due enquiry"
+      ]
+    },
+    {
+      "id": "SPA-04",
+      "topic": "De minimis and basket",
+      "preferred": "De minimis EUR 25,000; tipping basket of 0.5% of the Purchase Price (liable from the first euro once exceeded).",
+      "fallback": "De minimis up to EUR 50,000; basket up to 1% of the Purchase Price, tipping.",
+      "never": "A deductible basket (liability only for the excess) or a de minimis above EUR 50,000.",
+      "guidance": "Deductible baskets shift the first loss permanently to the Buyer.",
+      "keywords": [
+        "de minimis",
+        "basket",
+        "first euro",
+        "excess"
+      ],
+      "redFlags": [
+        "only for the excess",
+        "deductible"
+      ],
+      "redFlagVerdict": "negotiate"
+    },
+    {
+      "id": "SPA-05",
+      "topic": "Liability cap",
+      "preferred": "Cap at 30% of the Purchase Price for business warranties; title and tax up to the Purchase Price.",
+      "fallback": "Cap at 20% of the Purchase Price.",
+      "never": "A cap below 15% of the Purchase Price, unless W&I insurance covers the gap.",
+      "guidance": "Check whether a W&I policy is in place before conceding on the cap.",
+      "keywords": [
+        "aggregate liability",
+        "limited to",
+        "% of the purchase price"
+      ]
+    },
+    {
+      "id": "SPA-06",
+      "topic": "Intent and fraud carve-out",
+      "preferred": "No limitation applies in case of intent or fraud (Vorsatz oder Arglist).",
+      "fallback": null,
+      "never": "Narrowing or deleting the intent and fraud carve-out.",
+      "guidance": "Liability for intent cannot be excluded in advance (§ 276(3) BGB); fraud (arglistige Täuschung) must stay carved out. Red line.",
+      "keywords": [
+        "intent",
+        "fraud",
+        "arglist",
+        "vorsatz"
+      ]
+    },
+    {
+      "id": "SPA-07",
+      "topic": "Limitation period",
+      "preferred": "Warranty claims: 24 months after Closing. Tax claims: 6 months after final assessment.",
+      "fallback": "Warranty claims: 18 months after Closing.",
+      "never": "Less than 18 months for warranty claims.",
+      "guidance": "Buyer needs at least one full audit cycle after Closing.",
+      "keywords": [
+        "time-barred",
+        "limitation period"
+      ]
+    },
+    {
+      "id": "SPA-08",
+      "topic": "Tax indemnity",
+      "preferred": "Full indemnity for pre-Locked Box taxes.",
+      "fallback": "Indemnity to the extent the taxes exceed the provisions in the Locked Box Accounts.",
+      "never": "No tax indemnity.",
+      "guidance": "Provisions in the accounts are the usual and acceptable carve-out.",
+      "keywords": [
+        "indemnify",
+        "taxes",
+        "tax indemnity"
+      ]
+    },
+    {
+      "id": "SPA-09",
+      "topic": "Material adverse change",
+      "preferred": "Buyer may withdraw before Closing if a Material Adverse Change occurs.",
+      "fallback": "MAC limited to target-specific events (no general market or industry events).",
+      "never": null,
+      "guidance": "MAC clauses are less common in German deals; deletion is negotiable but should be traded.",
+      "keywords": [
+        "material adverse change",
+        "withdraw"
+      ]
+    },
+    {
+      "id": "SPA-10",
+      "topic": "Seller non-compete",
+      "preferred": "Three (3) years after Closing.",
+      "fallback": "Two (2) years after Closing.",
+      "never": "Less than two years.",
+      "guidance": "Ancillary-restraint guidance allows up to 3 years when goodwill and know-how transfer, 2 years for goodwill only; longer periods risk invalidity.",
+      "keywords": [
+        "compete",
+        "non-compete"
+      ]
+    },
+    {
+      "id": "SPA-11",
+      "topic": "Employment commitments by the Buyer",
+      "preferred": "No restrictions on the Buyer's post-Closing personnel decisions.",
+      "fallback": "Information and consultation undertakings, without dismissal bans.",
+      "never": "A ban on operational dismissals (betriebsbedingte Kündigungen) or job guarantees without a business case approved by the Buyer's investment committee.",
+      "guidance": "Escalate to the employment team and the deal lead: commercial decision with works council implications.",
+      "keywords": [
+        "employ",
+        "terminate",
+        "dismissal",
+        "kündigung"
+      ],
+      "redFlags": [
+        "betriebsbedingte",
+        "shall not terminate",
+        "job guarantee"
+      ],
+      "redFlagVerdict": "human_review"
+    },
+    {
+      "id": "SPA-12",
+      "topic": "Governing law and dispute resolution",
+      "preferred": "German law; DIS arbitration seated in Frankfurt am Main.",
+      "fallback": "German law; DIS arbitration seated in Berlin or Munich.",
+      "never": "Non-German governing law.",
+      "guidance": "A foreign seat raises costs and enforceability questions for a German target.",
+      "keywords": [
+        "governed by",
+        "arbitration",
+        "seat"
+      ],
+      "redFlags": [
+        "lcia",
+        "laws of england",
+        "english law",
+        "icc"
+      ],
+      "redFlagVerdict": "negotiate"
+    }
+  ]
+}

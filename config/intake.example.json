@@ -1,0 +1,21 @@
+{
+  "ourAddresses": ["buyer.counsel@halden-legal.example"],
+  "intakeAddresses": ["redline-intake@halden-legal.example"],
+  "routing": { "autoThreshold": 60, "minMargin": 25 },
+  "matters": [
+    {
+      "id": "SPA-Nordlicht",
+      "title": "Acquisition of Nordlicht Software GmbH (Buyer side)",
+      "playbook": "spa-share-deal",
+      "counterpartyAddresses": ["m.hughes@northwind-legal.example"],
+      "counterpartyDomains": ["northwind-legal.example"]
+    },
+    {
+      "id": "SPA-Polaris",
+      "title": "Acquisition of Polaris Data GmbH (Buyer side)",
+      "playbook": "spa-share-deal",
+      "counterpartyAddresses": [],
+      "counterpartyDomains": ["kessler-partner.example"]
+    }
+  ]
+}
