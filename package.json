@@ -11,7 +11,8 @@
     "samples": "python3 samples/make_samples.py samples && python3 samples/make_spa.py",
     "stamp": "node scripts/stamp.js",
     "intake": "node scripts/intake.js",
-    "fixtures": "python3 samples/make_spa.py && python3 tests/fixtures/make_emails.py"
+    "fixtures": "python3 samples/make_spa.py && python3 tests/fixtures/make_emails.py",
+    "gdocs:build": "node scripts/build-gdocs.js"
   },
   "dependencies": {
     "express": "^4.21.2",

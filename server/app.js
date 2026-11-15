@@ -4,6 +4,8 @@
 //  - /api/matters, /api/triage: version registry and the "needs a matter" queue
 //  - /api/documents, /api/versions/:id/*: what is open in Word, its timeline,
 //    and lawyer-confirmed registration of unknown documents
+//  - with `token`: API only, every request needs "Authorization: Bearer <token>"
+//    (the listener a tunnel exposes to the Google Docs add-on)
 
 import express from "express";
 import { readFileSync, readdirSync } from "node:fs";
@@ -17,26 +19,44 @@ import { identifyDocument, buildTimeline } from "./timeline.js";
 import { norm } from "../public/lib/ooxml.js";
 
 const MAX_PARAGRAPHS = 20000;
+export const MIN_TOKEN_LENGTH = 32;
 
 /** Audit lines carry ids, counts and verdicts only - never contract text. */
 const defaultAudit = (event) => console.log(JSON.stringify({ at: new Date().toISOString(), ...event }));
 
 const bad = (message) => Object.assign(new Error(message), { status: 400 });
 
+/** Constant-time bearer check; compares SHA-256 digests so lengths never leak. */
+export function bearerAuth(token) {
+  if (typeof token !== "string" || token.length < MIN_TOKEN_LENGTH) {
+    throw new Error(`API token must be at least ${MIN_TOKEN_LENGTH} characters`);
+  }
+  const want = crypto.createHash("sha256").update(token).digest();
+  return (req, res, next) => {
+    const m = /^Bearer (.+)$/.exec(req.get("authorization") || "");
+    const got = crypto.createHash("sha256").update(m ? m[1] : "").digest();
+    if (m && crypto.timingSafeEqual(got, want)) return next();
+    res.status(401).json({ error: "missing or invalid API token" });
+  };
+}
+
 /**
  * @param ctx   { store, config, mock?, notify? } from createContext()
- * @param opts  { root, preview?, audit? }
+ * @param opts  { root, preview?, audit?, token? }  token: API-only app behind bearer auth
  */
-export function createApp(ctx, { root, preview = !!process.env.PREVIEW, audit = defaultAudit } = {}) {
+export function createApp(ctx, { root, preview = !!process.env.PREVIEW, audit = defaultAudit, token } = {}) {
   const app = express();
+  if (token !== undefined) app.use(bearerAuth(token));
   app.use(express.json({ limit: "5mb" }));
-  app.use(express.static(path.join(root, "public")));
-  app.use("/vendor/jszip", express.static(path.join(root, "node_modules/jszip/dist")));
-  app.use("/playbooks", express.static(path.join(root, "playbooks")));
-  app.use("/samples", express.static(path.join(root, "samples"), { index: false }));
+  if (token === undefined) {
+    app.use(express.static(path.join(root, "public")));
+    app.use("/vendor/jszip", express.static(path.join(root, "node_modules/jszip/dist")));
+    app.use("/playbooks", express.static(path.join(root, "playbooks")));
+    app.use("/samples", express.static(path.join(root, "samples"), { index: false }));
+  }
 
   // Browser preview without Word (PREVIEW=1): task pane + Office.js stub + sample doc
-  if (preview) {
+  if (preview && token === undefined) {
     app.get("/preview.html", (_req, res) => {
       const html = readFileSync(path.join(root, "public/taskpane.html"), "utf8").replace(
         /<script src="https:\/\/appsforoffice[^"]+"><\/script>\s*<script src="\/vendor\/jszip\/jszip.min.js"><\/script>/,
@@ -132,6 +152,22 @@ export function createApp(ctx, { root, preview = !!process.env.PREVIEW, audit = 
     const result = identifyDocument(doc, all);
     audit({ event: "identify", status: result.status, versionId: result.versionId, score: result.score, paragraphs: doc.afterTexts.length });
     res.json({ ...result, timeline: result.versionId ? buildTimeline(all, result.versionId) : null });
+  }));
+
+  // the whole .docx (Google Docs add-on exports the open Doc): same answer as /identify,
+  // plus what the file itself has, so the sidebar picks the review mode
+  app.post("/api/documents/identify-file", express.raw({ type: () => true, limit: "30mb" }), wrap(async (req, res) => {
+    if (!req.body?.length) throw bad("send the .docx as the request body");
+    let doc;
+    try { doc = await readDocx(req.body); } catch { throw bad("not a readable .docx"); }
+    const all = store.versions();
+    const result = identifyDocument(doc, all);
+    audit({ event: "identify_file", status: result.status, versionId: result.versionId, score: result.score, paragraphs: doc.afterTexts.length, stamped: !!doc.stamp });
+    res.json({
+      ...result,
+      timeline: result.versionId ? buildTimeline(all, result.versionId) : null,
+      opened: { hasTrackedChanges: doc.hasTrackedChanges, stamped: !!doc.stamp },
+    });
   }));
 
   app.get("/api/versions/:id/timeline", (req, res) => {

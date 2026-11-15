@@ -1,5 +1,7 @@
 // Local HTTPS server: task pane for the Word add-in (Office requires HTTPS,
 // even on localhost), the API (see server/app.js) and the Gmail poller.
+// Optional second listener for the Google Docs add-on (via a tunnel):
+// GDOCS_PORT + REDLINE_API_TOKEN -> API only, bearer token required, 127.0.0.1 only.
 
 import https from "node:https";
 import http from "node:http";
@@ -24,7 +26,17 @@ async function start() {
     const options = await certs.getHttpsServerOptions();
     https.createServer(options, app).listen(PORT, () => console.log(`redliningPal on https://localhost:${PORT} ${banner}`));
   }
+  startGdocsListener();
   startGmailPoller(ctx);
+}
+
+function startGdocsListener() {
+  const port = process.env.GDOCS_PORT;
+  if (!port) return;
+  // createApp refuses a missing or short token: fail loudly instead of exposing an open API
+  const gdocs = createApp(ctx, { root, token: process.env.REDLINE_API_TOKEN ?? "" });
+  http.createServer(gdocs).listen(Number(port), "127.0.0.1",
+    () => console.log(`Google Docs API (token required) on http://127.0.0.1:${port} - point the tunnel here`));
 }
 
 start();

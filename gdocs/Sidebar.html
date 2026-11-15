@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <meta charset="utf-8">
+  <style>
+    body { font: 13px/1.4 Arial, sans-serif; margin: 12px; color: #202124; }
+    h2 { font-size: 14px; margin: 0 0 8px; }
+    h3 { font-size: 13px; margin: 16px 0 6px; }
+    .muted { color: #5f6368; }
+    .error { color: #b3261e; }
+    .warn { background: #fef7e0; padding: 6px 8px; border-radius: 4px; margin-top: 8px; }
+    .alert { background: #fce8e6; color: #8c1d18; padding: 6px 8px; border-radius: 4px; margin-top: 8px; }
+    .ok { background: #e6f4ea; color: #0d652d; padding: 6px 8px; border-radius: 4px; margin-top: 8px; }
+    .badge { display: inline-block; background: #b3261e; color: #fff; border-radius: 10px; padding: 1px 8px; font-size: 11px; }
+    dl { margin: 8px 0; } dt { color: #5f6368; font-size: 11px; margin-top: 6px; } dd { margin: 0; }
+    label { display: block; margin-top: 8px; font-size: 11px; color: #5f6368; }
+    input, select { width: 100%; box-sizing: border-box; padding: 4px; }
+    button { margin-top: 8px; margin-right: 4px; }
+    .card { border: 1px solid #dadce0; border-radius: 6px; padding: 8px; margin-top: 8px; }
+    .card .head { font-weight: bold; }
+    .card .label { color: #5f6368; font-size: 11px; margin-top: 6px; }
+    .card .text { white-space: pre-wrap; }
+    .verdict { font-size: 11px; text-transform: uppercase; letter-spacing: .03em; }
+    details { margin-top: 16px; border-top: 1px solid #dadce0; padding-top: 8px; }
+    a { color: #1a73e8; }
+  </style>
+  <?!= include("VersionView") ?>
+</head>
+<body>
+  <h2>Version</h2>
+  <div id="status" class="muted">Checking the open document…</div>
+
+  <div id="panel" hidden>
+    <dl>
+      <dt>Matter</dt><dd id="matter"></dd>
+      <dt>This document</dt><dd id="version"></dd>
+      <dt>Match</dt><dd id="match"></dd>
+      <dt>Base (our version they worked on)</dt><dd id="base"></dd>
+      <dt>Supersedes</dt><dd id="supersedes"></dd>
+    </dl>
+    <div id="warning" class="warn" hidden></div>
+    <ul id="flags" class="muted"></ul>
+    <button id="openBase" hidden>Open base version</button>
+    <div id="baseLink"></div>
+
+    <div id="untracked" hidden>
+      <h3>Changes without track changes <span id="untrackedBadge" class="badge"></span></h3>
+      <div id="gate" class="alert" hidden>
+        Do not use <b>Accept all</b> yet. These changes are not suggestions, so accepting all
+        would keep them without anyone noticing. Review them, then acknowledge.
+      </div>
+      <div id="cards"></div>
+      <button id="ack" hidden>I have reviewed these changes</button>
+      <div id="acked" class="ok" hidden></div>
+    </div>
+  </div>
+
+  <div id="unknown" hidden>
+    <p>This document is not registered with any matter.</p>
+    <ul id="candidates"></ul>
+    <button id="triage">Send to triage…</button>
+    <div id="triageForm" hidden>
+      <p class="muted">Nothing is registered until you confirm.</p>
+      <label for="tMatter">Matter</label><select id="tMatter"></select>
+      <label for="tSide">Whose version is this?</label>
+      <select id="tSide">
+        <option value="">choose…</option>
+        <option value="theirs">Counterparty's</option>
+        <option value="ours">Ours</option>
+      </select>
+      <label for="tBase">Base (the version it was made from)</label><select id="tBase" disabled></select>
+      <button id="tConfirm" disabled>Register</button>
+    </div>
+  </div>
+
+  <button id="refresh">Check again</button>
+
+  <details id="settings">
+    <summary>Settings</summary>
+    <label for="url">Server address (tunnel, https://)</label>
+    <input id="url" type="url" placeholder="https://….trycloudflare.com" autocomplete="off">
+    <label for="token">API token <span id="tokenState" class="muted"></span></label>
+    <input id="token" type="password" autocomplete="off">
+    <button id="save">Save</button>
+    <div id="settingsMsg" class="muted"></div>
+  </details>
+
+  <script>
+    // Server data is untrusted: it is only ever set via textContent, never parsed as HTML.
+    var $ = function (id) { return document.getElementById(id); };
+    var state = { view: null, triage: null };
+
+    function message(e) { return String((e && e.message) || e).replace(/^(Exception|Error):\s*/, ""); }
+    function call(fn, args, ok, fail) {
+      var r = google.script.run.withSuccessHandler(ok).withFailureHandler(fail || showError);
+      r[fn].apply(r, args || []);
+    }
+    function status(text, cls) {
+      $("status").className = cls || "muted"; $("status").textContent = text; $("status").hidden = !text;
+    }
+    function showError(e) { status(message(e), "error"); }
+    function el(tag, cls, text) {
+      var n = document.createElement(tag);
+      if (cls) n.className = cls;
+      if (text !== undefined) n.textContent = text;
+      return n;
+    }
+    function option(sel, value, text) { var o = el("option", "", text); o.value = value; sel.appendChild(o); }
+
+    // ---- known version ----------------------------------------------------------------
+
+    function render(r) {
+      $("panel").hidden = true; $("unknown").hidden = true; $("triageForm").hidden = true;
+      $("baseLink").textContent = ""; status("");
+      var v = RPView.versionView(r, (r && r.opened) || {});
+      state.view = v;
+      if (!v.known) return renderUnknown(v);
+
+      $("panel").hidden = false;
+      $("matter").textContent = v.matterId;
+      $("version").textContent = v.title;
+      $("match").textContent = v.match;
+      $("base").textContent = v.base ? v.base.text : "none (first draft)";
+      $("supersedes").textContent = v.supersedes || "none";
+      $("warning").textContent = v.warning || ""; $("warning").hidden = !v.warning;
+      var fl = $("flags"); fl.textContent = "";
+      v.flags.forEach(function (f) { fl.appendChild(el("li", "", f)); });
+      $("openBase").hidden = !v.base;
+
+      $("untracked").hidden = !v.untracked.count;
+      if (v.untracked.count) {
+        $("untrackedBadge").textContent = v.untracked.text;
+        renderAck(v);
+        $("cards").textContent = "Loading…";
+        call("getUntracked", [v.versionId], renderCards, function (e) { $("cards").textContent = message(e); });
+      }
+    }
+
+    function renderAck(v) {
+      $("gate").hidden = !v.gateClosed;
+      $("ack").hidden = !v.gateClosed;
+      $("acked").hidden = v.gateClosed;
+      $("acked").textContent = v.untracked.acknowledgedAt
+        ? "Acknowledged " + String(v.untracked.acknowledgedAt).slice(0, 16).replace("T", " ") + " UTC. Accept all is no longer advised against." : "";
+    }
+
+    function renderCards(res) {
+      var box = $("cards"); box.textContent = "";
+      (res.units || []).forEach(function (u) {
+        var card = el("div", "card");
+        card.appendChild(el("div", "head", (u.section ? "Clause " + u.section : "Paragraph") + " · " + u.kind));
+        if (u.finding) {
+          card.appendChild(el("div", "verdict", u.finding.verdict + (u.finding.risk ? " · risk " + u.finding.risk : "")));
+          if (u.finding.rationale) card.appendChild(el("div", "muted", u.finding.rationale));
+        }
+        card.appendChild(el("div", "label", "Their text now"));
+        card.appendChild(el("div", "text", u.after || "(deleted)"));
+        card.appendChild(el("div", "label", "Our base wording"));
+        card.appendChild(el("div", "text", u.before || "(not in our base)"));
+        var note = el("div", "muted");
+        var go = el("button", "", "Go to");
+        go.disabled = !u.after;
+        go.onclick = function () {
+          call("goToText", [u.after], function (found) { note.textContent = found ? "" : "Not found in the document (edited since?)."; });
+        };
+        var ours = (u.finding && u.finding.counterProposal) || u.before;
+        var copy = el("button", "", "Copy our wording");
+        copy.disabled = !ours;
+        copy.onclick = function () {
+          copyText(ours);
+          note.textContent = "Copied. Paste it in Suggesting mode so it stays a tracked change.";
+        };
+        card.appendChild(go); card.appendChild(copy); card.appendChild(note);
+        box.appendChild(card);
+      });
+    }
+
+    function copyText(text) {
+      var ta = el("textarea"); ta.value = text; ta.style.position = "fixed"; ta.style.opacity = "0";
+      document.body.appendChild(ta); ta.select();
+      try { document.execCommand("copy"); } catch (e) { /* the text stays selected */ }
+      document.body.removeChild(ta);
+    }
+
+    $("ack").onclick = function () {
+      $("ack").disabled = true;
+      call("ackUntracked", [state.view.versionId], function (r) {
+        $("ack").disabled = false;
+        state.view.gateClosed = false;
+        state.view.untracked.acknowledgedAt = r.acknowledgedAt;
+        renderAck(state.view);
+      }, function (e) { $("ack").disabled = false; showError(e); });
+    };
+
+    $("openBase").onclick = function () {
+      var v = state.view;
+      $("openBase").disabled = true;
+      $("baseLink").textContent = "Preparing a Google Docs copy…";
+      call("openBaseVersion", [v.base.id, v.matterId + " " + v.base.text], function (r) {
+        $("openBase").disabled = false;
+        var a = el("a", "", "Open " + v.base.text + " in a new tab");
+        a.href = r.url; a.target = "_blank"; a.rel = "noopener";
+        $("baseLink").textContent = "";
+        $("baseLink").appendChild(a);
+      }, function (e) { $("openBase").disabled = false; $("baseLink").textContent = message(e); });
+    };
+
+    // ---- unknown document: triage -------------------------------------------------------
+
+    function renderUnknown(v) {
+      $("unknown").hidden = false;
+      var ul = $("candidates"); ul.textContent = "";
+      v.candidates.forEach(function (c) { ul.appendChild(el("li", "", c.text)); });
+      $("triage").hidden = false;
+    }
+
+    $("triage").onclick = function () {
+      $("triage").disabled = true;
+      status("Sending the document to triage…");
+      call("sendToTriage", [], function (r) {
+        $("triage").disabled = false; $("triage").hidden = true; status("");
+        state.triage = r;
+        var m = $("tMatter"); m.textContent = "";
+        option(m, "", "choose…");
+        r.matters.forEach(function (x) { option(m, x.id, x.id + (x.title ? ": " + x.title : "")); });
+        $("tSide").value = ""; $("tBase").textContent = ""; $("tBase").disabled = true; $("tConfirm").disabled = true;
+        $("triageForm").hidden = false;
+      }, function (e) { $("triage").disabled = false; showError(e); });
+    };
+
+    function loadBases() {
+      var matter = $("tMatter").value, side = $("tSide").value;
+      $("tConfirm").disabled = true;
+      $("tBase").textContent = ""; $("tBase").disabled = true;
+      if (!matter || !side) return;
+      call("getTriageBases", [state.triage.triageId, matter, side], function (r) {
+        var b = $("tBase");
+        option(b, "", side === "ours" ? "none (our first draft)" : "choose…");
+        r.bases.forEach(function (x) { option(b, x.versionId, x.label + " (" + Math.round(x.coverage * 100) + "% match)"); });
+        if (r.bases.length) b.value = r.bases[0].versionId; // best suggestion preselected, lawyer confirms
+        b.disabled = false;
+        $("tConfirm").disabled = false;
+      });
+    }
+    $("tMatter").onchange = loadBases;
+    $("tSide").onchange = loadBases;
+
+    $("tConfirm").onclick = function () {
+      if ($("tSide").value === "theirs" && !$("tBase").value) {
+        return status("Choose the base: which of our versions did they work on?", "error");
+      }
+      $("tConfirm").disabled = true;
+      call("assignTriage", [state.triage.triageId, $("tMatter").value, $("tSide").value, $("tBase").value], function () {
+        state.triage = null;
+        identify();
+      }, function (e) { $("tConfirm").disabled = false; showError(e); });
+    };
+
+    // ---- start, settings ------------------------------------------------------------------
+
+    function identify() {
+      status("Checking the open document…");
+      call("identifyOpenDoc", [], render);
+    }
+
+    function showSettings(s) {
+      $("url").value = s.url;
+      $("tokenState").textContent = s.hasToken ? "(stored; leave empty to keep)" : "(not set)";
+      $("token").value = "";
+      if (!s.url || !s.hasToken) $("settings").open = true;
+      return s.url && s.hasToken;
+    }
+
+    $("refresh").onclick = identify;
+    $("save").onclick = function () {
+      $("settingsMsg").textContent = "Saving…";
+      call("saveSettings", [$("url").value, $("token").value], function (s) {
+        showSettings(s); $("settingsMsg").textContent = "Saved."; identify();
+      }, function (e) { $("settingsMsg").textContent = message(e); });
+    };
+
+    call("getSettingsInfo", [], function (s) {
+      if (showSettings(s)) identify();
+      else status("Not set up yet: enter the server address and token below.", "error");
+    });
+  </script>
+</body>
+</html>

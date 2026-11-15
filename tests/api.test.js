@@ -199,3 +199,83 @@ test("timeline payloads carry no contract text", async () => {
   const texts = ctx.store.versions().flatMap((v) => [...v.afterTexts, ...v.beforeTexts]).filter((t) => t.length > 20);
   for (const t of new Set(texts)) assert.ok(!payload.includes(t), `leaked: ${t.slice(0, 40)}…`);
 });
+
+// ---- Google Docs add-on: token-only listener + whole-file identify -----------------
+
+const TOKEN = "t".repeat(16) + "0123456789abcdef"; // 32 chars, test only
+const gdocsExport = () => readFileSync(new URL("./fixtures/gdocs/spa_v2_gdocs_export.docx", import.meta.url));
+
+/** A second app on the same ctx, as server.js starts it for the tunnel. */
+async function withTokenApp(fn) {
+  const s = http.createServer(createApp(ctx, { root, token: TOKEN, audit: (e) => auditLog.push(e) })).listen(0);
+  await new Promise((r) => s.once("listening", r));
+  const url = `http://127.0.0.1:${s.address().port}`;
+  try { await fn(url); } finally { s.close(); }
+}
+
+test("token app: refuses to start without a long enough token", () => {
+  assert.throws(() => createApp(ctx, { root, token: "" }), /at least 32/);
+  assert.throws(() => createApp(ctx, { root, token: "short" }), /at least 32/);
+});
+
+test("token app: 401 without or with a wrong token, 200 with the right one; no static files", async () => {
+  await withTokenApp(async (url) => {
+    assert.equal((await fetch(`${url}/api/matters`)).status, 401);
+    assert.equal((await fetch(`${url}/api/matters`, { headers: { authorization: `Bearer ${TOKEN}x` } })).status, 401);
+    assert.equal((await fetch(`${url}/api/matters`, { headers: { authorization: TOKEN } })).status, 401, "Bearer scheme required");
+    const ok = await fetch(`${url}/api/matters`, { headers: { authorization: `Bearer ${TOKEN}` } });
+    assert.equal(ok.status, 200);
+    assert.ok((await ok.json()).some((m) => m.id === "SPA-Nordlicht"));
+    for (const p of ["/taskpane.html", "/samples/spa/spa_v1_ours.docx", "/playbooks/mutual-nda.json"]) {
+      assert.equal((await fetch(url + p, { headers: { authorization: `Bearer ${TOKEN}` } })).status, 404, p);
+    }
+  });
+});
+
+test("default app: Word flow still needs no token", async () => {
+  assert.equal((await api("GET", "/api/matters")).status, 200);
+  assert.equal((await fetch(`${base}/taskpane.html`)).status, 200);
+});
+
+test("identify-file: a real Google Docs export of v2 is v2, with tracked changes and our stamp", async () => {
+  await withTokenApp(async (url) => {
+    const res = await fetch(`${url}/api/documents/identify-file`, {
+      method: "POST", body: gdocsExport(),
+      headers: { authorization: `Bearer ${TOKEN}`, "content-type": "application/octet-stream" },
+    });
+    const body = await res.json();
+    assert.equal(res.status, 200);
+    assert.equal(body.status, "exact");
+    assert.equal(body.versionId, byLabel("v2").id);
+    assert.equal(body.timeline.base.label, "v1");
+    assert.deepEqual(body.opened, { hasTrackedChanges: true, stamped: true });
+    const line = auditLog.at(-1);
+    assert.deepEqual(Object.keys(line).sort(), ["event", "paragraphs", "score", "stamped", "status", "versionId"]);
+    assert.equal(line.event, "identify_file");
+  });
+});
+
+test("identify-file: the same export with the stamp stripped is still v2 (text decides)", async () => {
+  const zip = await JSZip.loadAsync(gdocsExport());
+  zip.remove("docProps/custom.xml");
+  const r = await api("POST", "/api/documents/identify-file", await zip.generateAsync({ type: "nodebuffer" }));
+  assert.equal(r.body.status, "exact");
+  assert.equal(r.body.versionId, byLabel("v2").id);
+  assert.equal(r.body.opened.stamped, false);
+});
+
+test("identify-file: empty or non-docx body -> 400; unknown document -> no timeline, no contract text in audit", async () => {
+  assert.equal((await api("POST", "/api/documents/identify-file", Buffer.alloc(0))).status, 400);
+  assert.equal((await api("POST", "/api/documents/identify-file", Buffer.from("plain text"))).status, 400);
+  // a document nobody registered (the NDA may already be registered by the triage test)
+  const zip = await JSZip.loadAsync(file("spa/spa_v1_ours.docx"));
+  const xml = await zip.file("word/document.xml").async("string");
+  const secret = "Lease of warehouse 7 to Example Logistics for a monthly rent of EUR 12,345.";
+  zip.file("word/document.xml", xml.replace(/<w:body>[\s\S]*?(<w:sectPr)/, `<w:body><w:p><w:r><w:t>${secret}</w:t></w:r></w:p>$1`));
+  const r = await api("POST", "/api/documents/identify-file", await zip.generateAsync({ type: "nodebuffer" }));
+  assert.equal(r.status, 200);
+  assert.equal(r.body.status, "unknown");
+  assert.equal(r.body.timeline, null);
+  assert.equal(auditLog.at(-1).event, "identify_file");
+  assert.ok(!JSON.stringify(auditLog.at(-1)).includes("warehouse"), "contract text in audit line");
+});
