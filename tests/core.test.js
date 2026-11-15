@@ -103,7 +103,7 @@ test("similarity sanity", () => {
   assert.ok(similarity("Governing law", "Non-solicitation of staff") < 0.2);
 });
 
-import { wordDiff, minimalEdit } from "../public/lib/diff.js";
+import { wordDiff, minimalEdit, suggestionEdit } from "../public/lib/diff.js";
 
 test("minimalEdit keeps shared prefix/suffix", () => {
   const e = minimalEdit("continue for five (5) years after", "continue for three (3) years after");
@@ -115,4 +115,49 @@ test("wordDiff marks insertions and deletions", () => {
   const d = wordDiff("governed by German law.", "governed by the laws of England.");
   assert.ok(d.some((s) => s.op === "-" && s.text.includes("German")));
   assert.ok(d.some((s) => s.op === "+" && s.text.includes("England")));
+});
+
+// ---- suggestionEdit: the smallest suggestion a lawyer applies by hand (Google Docs)
+
+test("suggestionEdit: a deleted 'or fraud' becomes an insertion between 'intent' and '.'", () => {
+  const e = suggestionEdit("4.4 None of the limitations in this Clause 4 apply in case of intent.",
+    "4.4 None of the limitations in this Clause 4 apply in case of intent or fraud.");
+  assert.equal(e.kind, "insert");
+  assert.equal(e.newText, " or fraud");
+  assert.equal(e.hint, "Insert “or fraud” after “…in case of intent”");
+  assert.equal(e.after, ".");
+  assert.ok(e.before.endsWith("in case of intent"));
+});
+
+test("suggestionEdit: deletion reads as whole words, at the place a markup would show it", () => {
+  const e = suggestionEdit("accurate on the Signing Date and on the Closing Date.", "accurate on the Signing Date.");
+  assert.equal(e.kind, "delete");
+  assert.equal(e.oldText, " and on the Closing Date");
+  assert.equal(e.hint, "Delete “and on the Closing Date”");
+  assert.equal(e.before, "accurate on the Signing Date");
+  assert.equal(e.after, ".");
+});
+
+test("suggestionEdit: replacements stay whole words, not fragments like 'five (5'", () => {
+  const e = suggestionEdit("continue for five (5) years after", "continue for three (3) years after");
+  assert.deepEqual([e.kind, e.oldText, e.newText], ["replace", "five (5)", "three (3)"]);
+  assert.equal(e.hint, "Replace “five (5)” with “three (3)”");
+  const n = suggestionEdit("claims below EUR 100,000 (de minimis).", "claims below EUR 25,000 (de minimis).");
+  assert.deepEqual([n.oldText, n.newText, n.before, n.after], ["100,000", "25,000", "claims below EUR ", " (de minimis)."]);
+});
+
+test("suggestionEdit: whitespace differences are no change; start of paragraph; too long -> whole", () => {
+  assert.equal(suggestionEdit("same  text ", "same text").kind, "none");
+  const start = suggestionEdit("Seller warrants.", "The Seller warrants.");
+  assert.deepEqual([start.kind, start.newText, start.hint], ["insert", "The ", "Insert “The” at the start of the paragraph"]);
+  assert.equal(suggestionEdit("Price.", `Price; ${"x ".repeat(120)}`).kind, "whole");
+  assert.equal(suggestionEdit("", "4.4 restored paragraph").kind, "whole");
+});
+
+test("suggestionEdit: context is a few words, so the spot can be found again", () => {
+  const long = "1 2 3 4 5 6 7 8 9 10 claims below EUR 100,000 are excluded from 11 12 13 14 15 16 17 18";
+  const e = suggestionEdit(long, long.replace("100,000", "25,000"));
+  assert.equal(e.before, "5 6 7 8 9 10 claims below EUR ".slice(-e.before.length));
+  assert.ok(e.before.split(" ").filter(Boolean).length <= 6);
+  assert.ok(e.after.split(" ").filter(Boolean).length <= 6);
 });

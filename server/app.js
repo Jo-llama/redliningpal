@@ -16,6 +16,7 @@ import { processMessage, registerDocument } from "./intake.js";
 import { readDocx } from "./docx.js";
 import { rankBases } from "./matching.js";
 import { identifyDocument, buildTimeline } from "./timeline.js";
+import { findingsFor } from "./findings.js";
 import { norm } from "../public/lib/ooxml.js";
 
 const MAX_PARAGRAPHS = 20000;
@@ -183,6 +184,19 @@ export function createApp(ctx, { root, preview = !!process.env.PREVIEW, audit = 
       .map(({ id, section, kind, paragraphIndex, before, after, finding }) => ({ id, section, kind, paragraphIndex, before, after, finding }));
     res.json({ versionId: v.id, checked: !!v.analysis?.integrity?.checked, units });
   });
+
+  // playbook findings of a version + how far each change has got in the document as it
+  // is now (body: the .docx, e.g. the Google Docs export). Contract text: never logged.
+  app.post("/api/versions/:id/findings", express.raw({ type: () => true, limit: "30mb" }), wrap(async (req, res) => {
+    const v = versionOr404(req, res);
+    if (!v) return;
+    if (!req.body?.length) throw bad("send the current .docx as the request body");
+    let doc;
+    try { doc = await readDocx(req.body); } catch { throw bad("not a readable .docx"); }
+    const result = findingsFor(v, doc);
+    audit({ event: "findings", versionId: v.id, matterId: v.matterId, units: result.units.length, progress: result.progress });
+    res.json(result);
+  }));
 
   app.post("/api/versions/:id/ack-untracked", (req, res) => {
     const v = versionOr404(req, res);

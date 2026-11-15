@@ -4,6 +4,101 @@ var RPView = (function () {
 function norm(s) {
   return (s || "").replace(/\s+/g, " ").trim();
 }
+function wordDiff(before, after) {
+  const a = (before || "").split(/(\s+)/).filter((t) => t !== "");
+  const b = (after || "").split(/(\s+)/).filter((t) => t !== "");
+  const n = a.length, m = b.length;
+  const dp = Array.from({ length: n + 1 }, () => new Uint32Array(m + 1));
+  for (let i = n - 1; i >= 0; i--)
+    for (let j = m - 1; j >= 0; j--)
+      dp[i][j] = a[i] === b[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
+  const out = [];
+  const push = (op, text) => {
+    const last = out[out.length - 1];
+    if (last && last.op === op) last.text += text; else out.push({ op, text });
+  };
+  let i = 0, j = 0;
+  while (i < n || j < m) {
+    if (i < n && j < m && a[i] === b[j]) { push("=", a[i]); i++; j++; }
+    else if (i < n && (j >= m || dp[i + 1][j] >= dp[i][j + 1])) { push("-", a[i]); i++; }
+    else { push("+", b[j]); j++; }
+  }
+  return out;
+}
+function minimalEdit(oldText, newText) {
+  const a = (oldText || "").split(/(\s+)/).filter((t) => t !== "");
+  const b = (newText || "").split(/(\s+)/).filter((t) => t !== "");
+  let p = 0;
+  while (p < a.length && p < b.length && a[p] === b[p]) p++;
+  let s = 0;
+  while (s < a.length - p && s < b.length - p && a[a.length - 1 - s] === b[b.length - 1 - s]) s++;
+  return {
+    prefix: a.slice(0, p).join(""),
+    oldMiddle: a.slice(p, a.length - s).join(""),
+    newMiddle: b.slice(p, b.length - s).join(""),
+    suffix: a.slice(a.length - s).join(""),
+  };
+}
+function slideToWordStart(prefix, mid, suffix) {
+  const original = { prefix, mid, suffix };
+  while (prefix && mid && prefix[prefix.length - 1] === mid[mid.length - 1]) {
+    suffix = mid[mid.length - 1] + suffix;
+    mid = prefix[prefix.length - 1] + mid.slice(0, -1);
+    prefix = prefix.slice(0, -1);
+  }
+  let best = null;
+  for (;;) {
+    if (/^\s/.test(mid)) best = { prefix, mid, suffix };
+    if (!suffix || mid[0] !== suffix[0]) return best || original;
+    prefix += mid[0];
+    mid = mid.slice(1) + suffix[0];
+    suffix = suffix.slice(1);
+  }
+}
+function suggestionEdit(current, ours, { maxLength = 200, contextWords = 6 } = {}) {
+  const cur = norm(current), our = norm(ours);
+  if (cur === our) return { kind: "none", oldText: "", newText: "", before: "", after: "", hint: null };
+  let { prefix, oldMiddle: o, newMiddle: n, suffix } = minimalEdit(cur, our);
+
+  let i = 0;
+  while (i < o.length && i < n.length && o[i] === n[i]) i++;
+  let j = 0;
+  while (j < o.length - i && j < n.length - i && o[o.length - 1 - j] === n[n.length - 1 - j]) j++;
+  if (i + j === o.length || i + j === n.length) {
+    prefix += o.slice(0, i);
+    suffix = o.slice(o.length - j) + suffix;
+    o = o.slice(i, o.length - j);
+    n = n.slice(i, n.length - j);
+  }
+  // sentence punctuation shared at the end stays outside a replacement: "now." -> "within 30 days."
+  const stop = o && n ? /[.,;:!?]+$/.exec(o) : null;
+  if (stop && n.endsWith(stop[0]) && /\w$/.test(o.slice(0, -stop[0].length)) && /\w$/.test(n.slice(0, -stop[0].length))) {
+    suffix = stop[0] + suffix;
+    o = o.slice(0, -stop[0].length);
+    n = n.slice(0, -stop[0].length);
+  }
+  if (!o || !n) {
+    const s = slideToWordStart(prefix, o || n, suffix);
+    prefix = s.prefix; suffix = s.suffix;
+    if (o) o = s.mid; else n = s.mid;
+  }
+
+  const words = (s) => s.split(/(\s+)/).filter((t) => t !== "");
+  const before = words(prefix).slice(-2 * contextWords).join("");
+  const after = words(suffix).slice(0, 2 * contextWords).join("");
+  const q = (s) => `“${s.trim()}”`;
+  const lead = (s) => { const w = words(s.trimEnd()).slice(-7).join(""); return w.length < s.trimEnd().length ? `…${w}` : w; };
+
+  if (!cur || o.length > maxLength || n.length > maxLength) {
+    return { kind: "whole", oldText: cur, newText: our, before: "", after: "", hint: null };
+  }
+  if (!o) {
+    const where = prefix.trim() ? `after ${q(lead(prefix))}` : "at the start of the paragraph";
+    return { kind: "insert", oldText: "", newText: n, before, after, hint: `Insert ${q(n)} ${where}` };
+  }
+  if (!n) return { kind: "delete", oldText: o, newText: "", before, after, hint: `Delete ${q(o)}` };
+  return { kind: "replace", oldText: o, newText: n, before, after, hint: `Replace ${q(o)} with ${q(n)}` };
+}
 // What the task pane shows about the open document's version, and what it
 // allows. Pure: runs in the browser and in Node tests. No contract text in,
 // none out, except in untrackedUnits (review cards, never logged).
@@ -94,6 +189,72 @@ function untrackedUnits(serverUnits, parsedParas) {
     };
   });
 }
-return { versionView: versionView, gateClosed: gateClosed, untrackedUnits: untrackedUnits };
+
+// ---- playbook review (Google Docs sidebar) ------------------------------------------------
+
+const VERDICT_ORDER = { reject: 0, human_review: 1, negotiate: 2, accept: 3 };
+const STATE_TEXT = {
+  open: "Open",
+  countered: "Our counter-proposal is in",
+  accepted: "Accepted",
+  rejected: "Rejected",
+  changed: "Changed since the review: check by hand",
+};
+const HANDLED = new Set(["countered", "accepted", "rejected"]);
+
+/**
+ * Response of POST /api/versions/:id/findings -> what the "Playbook review" section shows.
+ * Only the counterparty's own changes (tracked / compare); untracked ones have their own section.
+ * Counter-proposals follow the Word flow: reject their change, then suggest ours, as the
+ * smallest edit from our text (what the paragraph says once theirs is rejected).
+ */
+function reviewCards(res) {
+  const units = (res?.units || []).filter((u) => u.source !== "untracked");
+  const cards = units
+    .map((u, i) => {
+      const f = u.finding || {};
+      const verdict = f.verdict || "human_review";
+      const cp = f.counterProposal && norm(f.counterProposal) !== norm(u.before) ? norm(f.counterProposal) : null;
+      const steps = [];
+      let edit = null;
+      if (u.state === "open") {
+        if (verdict === "accept") steps.push("Accept their suggestion (✓ in the margin).");
+        else if (verdict === "human_review") steps.push("Decide yourself: accept (✓) or reject (✗) in the margin.");
+        else if (cp) {
+          steps.push("Reject their suggestion (✗ in the margin).");
+          edit = suggestionEdit(u.before, cp);
+          steps.push(edit.kind === "whole" || edit.kind === "none"
+            ? "Then paste our wording in Suggesting mode."
+            : `Then, in Suggesting mode: ${edit.hint}.`);
+        } else if (verdict === "reject") steps.push("Reject their suggestion (✗ in the margin).");
+        else steps.push("Reject their suggestion (✗), or keep it open and offer our fallback position in a comment.");
+      }
+      return {
+        id: u.id, order: i, verdict, risk: f.risk || null, ruleIds: f.ruleIds || [],
+        title: `${u.section || "Paragraph"} · ${u.kind}`,
+        rationale: f.rationale || "", flags: f.flags || [],
+        diff: wordDiff(u.before, u.after),
+        state: u.state, stateText: STATE_TEXT[u.state] || u.state, handled: HANDLED.has(u.state),
+        steps, edit, ours: cp, comment: f.comment || "",
+        goTo: [u.after, u.before].filter(Boolean),
+        carriedOver: u.status === "carried_over",
+      };
+    })
+    .sort((a, b) => (VERDICT_ORDER[a.verdict] ?? 9) - (VERDICT_ORDER[b.verdict] ?? 9) || a.order - b.order);
+
+  const verdicts = {};
+  for (const c of cards) verdicts[c.verdict] = (verdicts[c.verdict] || 0) + 1;
+  const handled = cards.filter((c) => c.handled).length;
+  const parts = ["reject", "human_review", "negotiate", "accept"].filter((v) => verdicts[v]).map((v) => `${verdicts[v]} ${v.replace("_", " ")}`);
+  const source = res?.mode === "live" ? res.model : "mock reviewer";
+  return {
+    cards,
+    summary: cards.length ? `${cards.length} change${cards.length > 1 ? "s" : ""} · ${parts.join(" · ")}` : "No changes to review.",
+    progress: `${handled} of ${cards.length} handled`,
+    source: res?.playbook ? `Playbook ${res.playbook}, ${source}${res.reviewedAt ? `, ${String(res.reviewedAt).slice(0, 10)}` : ""}` : null,
+    allHandled: cards.length > 0 && handled === cards.length,
+  };
+}
+return { versionView: versionView, gateClosed: gateClosed, untrackedUnits: untrackedUnits, suggestionEdit: suggestionEdit, reviewCards: reviewCards };
 })();
 </script>

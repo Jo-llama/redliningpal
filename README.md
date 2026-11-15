@@ -62,7 +62,7 @@ Requires Node 18+.
 ```bash
 cd redlining-pal
 npm install
-npm test            # 86 tests should pass
+npm test            # 110 tests should pass
 ```
 
 ### 2. Trust a localhost certificate
@@ -195,6 +195,7 @@ If your own CC copy does not appear under the label, Gmail has hidden a copy add
 | GET | `/api/versions/:id/untracked` | Changes made without track changes, as review cards |
 | POST | `/api/versions/:id/ack-untracked` | Record that a lawyer reviewed them (unblocks bulk accept; audited) |
 | POST | `/api/documents/identify` | `{ afterTexts, beforeTexts, stamp }` of the open document → exact / probable / unknown + timeline |
+| POST | `/api/versions/:id/findings` | The current .docx as body → the version's playbook findings, each with its state in that document (open / countered / accepted / rejected / changed). Audit: counts only. |
 | POST | `/api/documents/identify-file` | The whole .docx as body (Google Docs add-on) → same answer, plus `opened: { hasTrackedChanges, stamped }` |
 | POST | `/api/documents/triage` | Unknown .docx as body → triage item (409 if already registered) |
 | GET | `/api/triage` | Mails and documents that could not be assigned automatically |
@@ -213,10 +214,10 @@ The counterparty's .docx often ends up in Google Drive. The add-on brings the ve
 |---|---|---|
 | Matter, version, base, supersedes, "newer version" warning | ✅ | ✅ same logic (`version-view.js`, built into `gdocs/VersionView.html`) |
 | Open base version | new Word window | Google Doc copy in your Drive, opened from a link; reused on the next click |
-| Changes without track changes | cards; **Accept all is blocked** until acknowledged | cards with **Go to** and **Copy our wording**; a red **advisory** warning until acknowledged. Accept all in Google Docs cannot be blocked. |
-| Accept / reject / counter-propose | written as tracked changes | not possible from a script; the lawyer pastes our wording in **Suggesting mode**, which makes it a normal suggestion |
+| Changes without track changes | cards; **Accept all is blocked** until acknowledged | cards with **Go to** and a **suggested edit** of only the words that differ ("Insert “or fraud” after “…in case of intent”"): **Mark the spot** puts the cursor there (or selects the text to replace or delete), **Copy** copies just those words. A red **advisory** warning until acknowledged. Accept all in Google Docs cannot be blocked. |
+| Accept / reject / counter-propose | written as tracked changes | not possible from a script; the lawyer pastes the copied words (or presses Delete) in **Suggesting mode**, which makes it a normal, minimal suggestion |
 | Unknown document | triage, confirmed by the lawyer | same flow |
-| Playbook review of each tracked change | ✅ | not yet (the server's analysis of registered versions exists; a sidebar view of it is an idea) |
+| Playbook review of each tracked change | ✅ live review of the open document | ✅ the findings stored at intake, one card per suggestion (reject first): verdict, rules, reasoning, their change as a word diff, and what to do: accept (✓), reject (✗), or reject and then suggest our counter-proposal as a minimal edit; **Copy comment** for the counterparty. Each card shows its **state** in the Doc as it is now: open, our counter-proposal is in, accepted, rejected, or changed. Handled cards are hidden until "Show handled changes". |
 
 How it identifies the open Doc: Apps Script exports it as .docx (exactly like *File → Download → Microsoft Word*) and sends the file to `/api/documents/identify-file`. We checked by hand that a Google Docs export keeps every tracked change as a suggestion and back, the paragraph texts, and our `rc-ver` stamp (Google hides the stamp in *File → Details* but writes it back on export). So the server needs no Google-specific parsing.
 
@@ -317,10 +318,12 @@ Intake limits:
 
 Google Docs limits:
 - Scripts cannot accept, reject or create suggestions (Google Docs API), so the "accept all" gate is a warning, and counter-proposals are pasted by the lawyer in Suggesting mode. The add-on never edits the document itself: its edits would be changes without track changes.
-- Pasting "our wording" replaces the whole sentence, not just the words that differ.
+- The suggested edit covers one contiguous change per paragraph. Several separate changes in one paragraph, or more than 200 characters, fall back to copying the whole wording.
 - The add-on runs as a test deployment, one per Doc (see above).
 - It needs a tunnel and a running local server; the quick tunnel address changes on every restart.
-- Comments can be added by the lawyer as usual; the add-on does not create them.
+- Comments can be added by the lawyer as usual; the add-on does not create them ("Copy comment" prepares the text).
+- The playbook review shows the findings made when the version arrived (intake). It does not review again what the lawyer changes in the Doc; the state per change is recomputed on every refresh.
+- The state is matched per paragraph by text. A paragraph whose text occurs twice, or a change split across paragraphs, may show as "changed".
 
 ## Next steps (ideas)
 - "Reopened" flag: the counterparty changes a clause that was agreed in an earlier round
@@ -330,7 +333,6 @@ Google Docs limits:
 - Export a negotiation log (change, verdict, action taken) as .xlsx for the matter file
 - Per-rule fallback ladders (first, second, final position) across negotiation rounds
 - Run the model on Azure/Bedrock in an EU region for client-data compliance
-- Google Docs: show only the words to change ("insert *or fraud* after *intent*") using the minimal edit from `diff.js`, instead of the whole sentence
+- Word: use `suggestionEdit` for counter-proposals too ("intent." → "intent or fraud." is currently written as a replaced word, not an insertion)
 - Google Docs: rebuild the sidebar as a Google Workspace add-on (card UI), installable once for all Docs without Marketplace publishing
-- Google Docs: playbook findings for each suggestion in the sidebar, read-only
 - A named Cloudflare tunnel or a hosted server (e.g. Cloud Run) instead of the quick tunnel

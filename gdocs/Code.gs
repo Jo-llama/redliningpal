@@ -170,6 +170,17 @@ function getUntracked(versionId) {
   return rpApi_("get", "/api/versions/" + rpId_(versionId, "version id") + "/untracked");
 }
 
+/**
+ * Playbook findings of the version, each with its state in the Doc as it is now
+ * (open / countered / accepted / rejected / changed): the Doc is exported again.
+ */
+function getFindings(versionId) {
+  var id = rpId_(versionId, "version id");
+  rpConfig_();
+  var bytes = rpExportOpenDoc_();
+  return rpApi_("post", "/api/versions/" + id + "/findings", { payload: bytes, contentType: "application/octet-stream" });
+}
+
 /** The lawyer has seen the untracked changes (recorded and audited on the server). */
 function ackUntracked(versionId) {
   return rpApi_("post", "/api/versions/" + rpId_(versionId, "version id") + "/ack-untracked");
@@ -192,6 +203,43 @@ function goToText(text) {
     .addElement(found.getElement().asText(), found.getStartOffset(), found.getEndOffsetInclusive())
     .build();
   doc.setSelection(range);
+  return true;
+}
+
+/** Literal text -> regex source; any run of whitespace matches any whitespace. */
+function rpPattern_(s) {
+  return String(s || "").split(/(\s+)/).filter(function (t) { return t !== ""; }).map(function (t) {
+    return /^\s+$/.test(t) ? "\\s+" : t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  }).join("");
+}
+
+/**
+ * Prepare a minimal suggestion (edit from suggestionEdit in the sidebar): put the
+ * cursor where text is to be inserted, or select exactly the text to replace or
+ * delete. The lawyer then pastes or presses Delete in Suggesting mode; the add-on
+ * never edits the document itself. Returns false if the spot is not found.
+ * @param edit { kind: "insert"|"delete"|"replace", before, oldText, after }
+ */
+function placeSuggestion(edit) {
+  if (!edit || ["insert", "delete", "replace"].indexOf(edit.kind) < 0) return false;
+  if (edit.kind !== "insert" && !String(edit.oldText || "").trim()) return false;
+  var pb = rpPattern_(edit.before), po = rpPattern_(edit.oldText), pa = rpPattern_(edit.after);
+  if (!(pb + po + pa)) return false;
+  var doc = DocumentApp.getActiveDocument();
+  var found = doc.getBody().findText(pb + po + pa);
+  if (!found) return false;
+  var el = found.getElement().asText();
+  // where the parts start inside the match (findText gives the match, not groups)
+  var re = new RegExp("(" + pb + ")(" + po + ")(" + pa + ")", "y");
+  re.lastIndex = found.getStartOffset();
+  var g = re.exec(el.getText());
+  if (!g) return false;
+  var start = found.getStartOffset() + g[1].length;
+  if (edit.kind === "insert") {
+    doc.setCursor(doc.newPosition(el, start));
+  } else {
+    doc.setSelection(doc.newRange().addElement(el, start, start + g[2].length - 1).build());
+  }
   return true;
 }
 

@@ -279,3 +279,41 @@ test("identify-file: empty or non-docx body -> 400; unknown document -> no timel
   assert.equal(auditLog.at(-1).event, "identify_file");
   assert.ok(!JSON.stringify(auditLog.at(-1)).includes("warehouse"), "contract text in audit line");
 });
+
+// ---- playbook findings with their state in the current document ---------------------------
+
+test("findings: v2's markup is all open, its clean copy all accepted, our v1 all rejected", async () => {
+  const v2 = byLabel("v2").id;
+  const states = async (f) => {
+    const r = await api("POST", `/api/versions/${v2}/findings`, file(f));
+    assert.equal(r.status, 200);
+    return r.body;
+  };
+  const open = await states("spa/spa_v2_theirs_tracked.docx");
+  assert.equal(open.units.length, 12);
+  assert.deepEqual(open.progress, { open: 12, countered: 0, accepted: 0, rejected: 0, changed: 0 });
+  assert.match(open.playbook, /^spa-share-deal@/);
+  assert.equal(open.mode, "mock");
+  assert.ok(open.units.every((u) => u.finding.verdict && u.before !== u.after));
+  assert.equal((await states("spa/spa_v2_theirs_clean.docx")).progress.accepted, 12);
+  assert.equal((await states("spa/spa_v1_ours.docx")).progress.rejected, 12);
+});
+
+test("findings: audit line has counts only; 404, 400; the token port requires the token", async () => {
+  const v21 = byLabel("v2.1").id;
+  await api("POST", `/api/versions/${v21}/findings`, file("spa/spa_v2-1_theirs_corrected.docx"));
+  const line = auditLog.at(-1);
+  assert.deepEqual(Object.keys(line).sort(), ["event", "matterId", "progress", "units", "versionId"]);
+  assert.equal(line.event, "findings");
+  assert.equal(line.units, 13);
+  assert.ok(!JSON.stringify(line).includes("Seller"), "no contract text in audit");
+
+  assert.equal((await api("POST", "/api/versions/nope/findings", file("spa/spa_v1_ours.docx"))).status, 404);
+  assert.equal((await api("POST", `/api/versions/${v21}/findings`, Buffer.alloc(0))).status, 400);
+  assert.equal((await api("POST", `/api/versions/${v21}/findings`, Buffer.from("not a docx"))).status, 400);
+  await withTokenApp(async (url) => {
+    const post = (headers) => fetch(`${url}/api/versions/${v21}/findings`, { method: "POST", body: file("spa/spa_v1_ours.docx"), headers: { "content-type": "application/octet-stream", ...headers } });
+    assert.equal((await post({})).status, 401);
+    assert.equal((await post({ authorization: `Bearer ${TOKEN}` })).status, 200);
+  });
+});
