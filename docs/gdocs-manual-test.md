@@ -100,10 +100,10 @@ A large change (over 200 characters) still shows "Copy our wording" for the whol
 
 | # | Check | Expected | Result |
 |---|---|---|---|
-| G1 | Converted `samples/nda_v2_counterparty_tracked.docx` | "This document is not registered…", Send to triage | – |
-| G2 | Send to triage | Form: matter, side, base. Nothing registered yet (`GET /api/matters` unchanged) | – |
-| G3 | Side "Counterparty's", no base chosen, Register | "Choose the base…", nothing registered | – |
-| G4 | Choose matter, side, base, Register | Panel shows the new version and its base; audit `triage_assign` | – |
+| G1 | Converted `samples/nda_v2_counterparty_tracked.docx` | "This document is not registered…", Send to triage | ✅ |
+| G2 | Send to triage | Form: matter, side, base. Nothing registered yet (`GET /api/matters` unchanged); audit `triage_document` | ✅ |
+| G3 | Side "Counterparty's", no base chosen, Register | "Choose the base…", nothing registered. In a matter without any version of ours (SPA-Polaris in the demo): "No version of ours in this matter yet…", Register disabled | ✅ "Choose the base…" (first run: SPA-Polaris showed an empty list without explanation; message added) |
+| G4 | Choose matter, side, base, Register | Panel shows the new version and its base; no "Playbook review" section for our own version; audit `triage_assign` | ✅ SPA-Polaris, Ours, first draft → v1; audit with ids only |
 
 ## H. Limits (expected, documented)
 

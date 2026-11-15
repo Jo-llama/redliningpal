@@ -66,7 +66,7 @@ never add real client contracts, names or emails.
   Email fixtures: `tests/fixtures/emails/`. Google Docs export fixture: `tests/fixtures/gdocs/`.
 
 ## Commands
-- `npm test`: node:test, must stay green (113 tests)
+- `npm test`: node:test, must stay green (114 tests)
 - `npm run intake -- tests/fixtures/emails/*.eml`: run intake and print the matter timeline (delete `data/` to reset)
 - `npm run fixtures`: regenerate SPA samples + .eml fixtures (Python, python-docx)
 - `npm start`: HTTPS server on :3000. `PREVIEW=1 HTTP_ONLY=1 npm start` + `/preview.html` = task pane without Word

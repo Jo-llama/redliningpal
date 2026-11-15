@@ -94,6 +94,8 @@
         <option value="ours">Ours</option>
       </select>
       <label for="tBase">Base (the version it was made from)</label><select id="tBase" disabled></select>
+      <div id="tNoBase" class="warn" hidden>No version of ours in this matter yet. Choose another matter, or register our draft first (Whose version: Ours).</div>
+      <ul id="tFlags" class="warn" hidden></ul>
       <button id="tConfirm" disabled>Register</button>
     </div>
   </div>
@@ -269,6 +271,7 @@
     function renderReview(res) {
       var rv = RPView.reviewCards(res);
       state.review = rv;
+      $("review").hidden = !rv.cards.length; // our own versions and clean copies: nothing to review
       $("reviewSummary").textContent = rv.summary;
       $("reviewProgress").textContent = rv.cards.length ? rv.progress + (rv.allHandled ? " ✓" : "") : "";
       $("reviewSource").textContent = rv.source || "";
@@ -376,12 +379,17 @@
       var matter = $("tMatter").value, side = $("tSide").value;
       $("tConfirm").disabled = true;
       $("tBase").textContent = ""; $("tBase").disabled = true;
+      $("tNoBase").hidden = true; $("tFlags").hidden = true; $("tFlags").textContent = "";
       if (!matter || !side) return;
       call("getTriageBases", [state.triage.triageId, matter, side], function (r) {
         var b = $("tBase");
+        // their version needs one of ours as its base: with none in this matter, say why and stop
+        if (side === "theirs" && !r.bases.length) { $("tNoBase").hidden = false; return; }
         option(b, "", side === "ours" ? "none (our first draft)" : "choose…");
         r.bases.forEach(function (x) { option(b, x.versionId, x.label + " (" + Math.round(x.coverage * 100) + "% match)"); });
         if (r.bases.length) b.value = r.bases[0].versionId; // best suggestion preselected, lawyer confirms
+        (r.flags || []).forEach(function (f) { $("tFlags").appendChild(el("li", "", f)); });
+        $("tFlags").hidden = !(r.flags || []).length;
         b.disabled = false;
         $("tConfirm").disabled = false;
       });

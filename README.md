@@ -62,7 +62,7 @@ Requires Node 18+.
 ```bash
 cd redlining-pal
 npm install
-npm test            # 113 tests should pass
+npm test            # 114 tests should pass
 ```
 
 ### 2. Trust a localhost certificate
