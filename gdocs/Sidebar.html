@@ -21,6 +21,7 @@
     .card .head { font-weight: bold; }
     .card .label { color: #5f6368; font-size: 11px; margin-top: 6px; }
     .card .text { white-space: pre-wrap; }
+    .card .hint { font-weight: bold; margin: 2px 0; }
     .verdict { font-size: 11px; text-transform: uppercase; letter-spacing: .03em; }
     details { margin-top: 16px; border-top: 1px solid #dadce0; padding-top: 8px; }
     a { color: #1a73e8; }
@@ -164,14 +165,47 @@
         go.onclick = function () {
           call("goToText", [u.after], function (found) { note.textContent = found ? "" : "Not found in the document (edited since?)."; });
         };
+        card.appendChild(go);
         var ours = (u.finding && u.finding.counterProposal) || u.before;
-        var copy = el("button", "", "Copy our wording");
-        copy.disabled = !ours;
-        copy.onclick = function () {
-          copyText(ours);
-          note.textContent = "Copied. Paste it in Suggesting mode so it stays a tracked change.";
-        };
-        card.appendChild(go); card.appendChild(copy); card.appendChild(note);
+        var edit = ours && u.after ? RPView.suggestionEdit(u.after, ours) : { kind: "whole" };
+
+        if (edit.kind === "insert" || edit.kind === "delete" || edit.kind === "replace") {
+          // only the words that differ, so the suggestion is as small as the change
+          card.appendChild(el("div", "label", "Suggested edit"));
+          card.appendChild(el("div", "hint", edit.hint));
+          card.appendChild(el("div", "muted", edit.kind === "delete"
+            ? "In Suggesting mode: Mark the text, then press Delete."
+            : "In Suggesting mode: Mark the spot, then paste."));
+          var mark = el("button", "", edit.kind === "insert" ? "Mark the spot" : "Mark the text");
+          mark.onclick = function () {
+            call("placeSuggestion", [{ kind: edit.kind, before: edit.before, oldText: edit.oldText, after: edit.after }], function (ok) {
+              note.textContent = ok
+                ? "Marked. Click into the document only if needed, then " + (edit.kind === "delete" ? "press Delete." : "paste (Ctrl+V).")
+                : "The spot was not found (edited since?). Use Go to and edit by hand.";
+            });
+          };
+          card.appendChild(mark);
+          if (edit.kind !== "delete") {
+            var label = edit.newText.trim();
+            var copyEdit = el("button", "", "Copy “" + (label.length > 30 ? label.slice(0, 29) + "…" : label) + "”");
+            copyEdit.onclick = function () {
+              copyText(edit.newText);
+              note.textContent = "Copied “" + label + "”. Paste it at the marked spot in Suggesting mode.";
+            };
+            card.appendChild(copyEdit);
+          }
+        } else if (edit.kind === "whole") {
+          var copy = el("button", "", "Copy our wording");
+          copy.disabled = !ours;
+          copy.onclick = function () {
+            copyText(ours);
+            note.textContent = "Copied. Paste it in Suggesting mode so it stays a tracked change.";
+          };
+          card.appendChild(copy);
+        } else {
+          note.textContent = "The document already has our wording here.";
+        }
+        card.appendChild(note);
         box.appendChild(card);
       });
     }

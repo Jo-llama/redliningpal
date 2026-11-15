@@ -13,7 +13,9 @@ never add real client contracts, names or emails.
 - Word add-in (Office.js, plain ES modules, no bundler): `manifest.xml`, `public/taskpane.*`
 - Shared pure logic in `public/lib/` (runs in browser AND Node tests):
   - `ooxml.js`: rebuild before/after text from <w:ins>/<w:del>; one review unit per paragraph
-  - `diff.js`: paragraph alignment (clean-copy compare), word diff, minimal edit
+  - `diff.js`: paragraph alignment (clean-copy compare), word diff, minimal edit; `suggestionEdit`
+    (smallest insert/delete/replace + context words, refined to characters only for pure insert/delete;
+    used by the Google Docs card, inlined into `gdocs/VersionView.html` by the build)
   - `review.js`: prompt, forced tool schema `report_findings`, guardrails, `validateFindings`, mock reviewer
   - `version-view.js`: version panel view model, "accept all" gate, untracked units -> review cards
 - Server: `server.js` only starts it (HTTPS via office-addin-dev-certs; `HTTP_ONLY=1` for tests), the
@@ -48,7 +50,7 @@ never add real client contracts, names or emails.
   - `Code.gs`: settings in user properties, the ONLY place holding the token; exports the open Doc
     via the Docs export link (not the Drive REST API) and posts it to `identify-file`; open base version
     = Advanced Drive v3 `Files.create` converting the .docx, cached per version id; go to (findText);
-    triage. Sidebar calls it via `google.script.run`.
+    `placeSuggestion` (cursor or exact selection from the context words; never edits); triage. Sidebar calls it via `google.script.run`.
   - `Sidebar.html`: UI; includes `VersionView.html`, GENERATED from `public/lib/version-view.js` by
     `scripts/build-gdocs.js` (never edit it by hand).
   - Scopes: documents.currentonly, drive.readonly (export; drive.file alone = 403), drive.file,
@@ -60,7 +62,7 @@ never add real client contracts, names or emails.
   Email fixtures: `tests/fixtures/emails/`. Google Docs export fixture: `tests/fixtures/gdocs/`.
 
 ## Commands
-- `npm test`: node:test, must stay green (86 tests)
+- `npm test`: node:test, must stay green (96 tests)
 - `npm run intake -- tests/fixtures/emails/*.eml`: run intake and print the matter timeline (delete `data/` to reset)
 - `npm run fixtures`: regenerate SPA samples + .eml fixtures (Python, python-docx)
 - `npm start`: HTTPS server on :3000. `PREVIEW=1 HTTP_ONLY=1 npm start` + `/preview.html` = task pane without Word

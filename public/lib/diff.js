@@ -154,6 +154,84 @@ export function minimalEdit(oldText, newText) {
 }
 
 /**
+ * A pure insertion or deletion can often sit at several places ("Date and on
+ * the Closing " vs " and on the Closing Date"). Prefer the rightmost one that
+ * starts with whitespace, so it reads as whole words like a markup would;
+ * otherwise keep the original place.
+ */
+function slideToWordStart(prefix, mid, suffix) {
+  const original = { prefix, mid, suffix };
+  while (prefix && mid && prefix[prefix.length - 1] === mid[mid.length - 1]) {
+    suffix = mid[mid.length - 1] + suffix;
+    mid = prefix[prefix.length - 1] + mid.slice(0, -1);
+    prefix = prefix.slice(0, -1);
+  }
+  let best = null;
+  for (;;) {
+    if (/^\s/.test(mid)) best = { prefix, mid, suffix };
+    if (!suffix || mid[0] !== suffix[0]) return best || original;
+    prefix += mid[0];
+    mid = mid.slice(1) + suffix[0];
+    suffix = suffix.slice(1);
+  }
+}
+
+/**
+ * The smallest edit that turns the text now in the document (`current`) into our
+ * wording (`ours`), for a lawyer to apply by hand as a suggestion (Google Docs).
+ * Word-level like minimalEdit, then refined to characters only if that makes it
+ * a pure insertion or deletion: "intent." -> "intent or fraud." becomes
+ * insert " or fraud" after "intent", while "five (5)" -> "three (3)" stays whole words.
+ *
+ * @returns { kind: "none"|"insert"|"delete"|"replace"|"whole", oldText, newText,
+ *            before, after, hint }   before/after: a few words of context to find the spot
+ */
+export function suggestionEdit(current, ours, { maxLength = 200, contextWords = 6 } = {}) {
+  const cur = norm(current), our = norm(ours);
+  if (cur === our) return { kind: "none", oldText: "", newText: "", before: "", after: "", hint: null };
+  let { prefix, oldMiddle: o, newMiddle: n, suffix } = minimalEdit(cur, our);
+
+  let i = 0;
+  while (i < o.length && i < n.length && o[i] === n[i]) i++;
+  let j = 0;
+  while (j < o.length - i && j < n.length - i && o[o.length - 1 - j] === n[n.length - 1 - j]) j++;
+  if (i + j === o.length || i + j === n.length) {
+    prefix += o.slice(0, i);
+    suffix = o.slice(o.length - j) + suffix;
+    o = o.slice(i, o.length - j);
+    n = n.slice(i, n.length - j);
+  }
+  // sentence punctuation shared at the end stays outside a replacement: "now." -> "within 30 days."
+  const stop = o && n ? /[.,;:!?]+$/.exec(o) : null;
+  if (stop && n.endsWith(stop[0]) && /\w$/.test(o.slice(0, -stop[0].length)) && /\w$/.test(n.slice(0, -stop[0].length))) {
+    suffix = stop[0] + suffix;
+    o = o.slice(0, -stop[0].length);
+    n = n.slice(0, -stop[0].length);
+  }
+  if (!o || !n) {
+    const s = slideToWordStart(prefix, o || n, suffix);
+    prefix = s.prefix; suffix = s.suffix;
+    if (o) o = s.mid; else n = s.mid;
+  }
+
+  const words = (s) => s.split(/(\s+)/).filter((t) => t !== "");
+  const before = words(prefix).slice(-2 * contextWords).join("");
+  const after = words(suffix).slice(0, 2 * contextWords).join("");
+  const q = (s) => `“${s.trim()}”`;
+  const lead = (s) => { const w = words(s.trimEnd()).slice(-7).join(""); return w.length < s.trimEnd().length ? `…${w}` : w; };
+
+  if (!cur || o.length > maxLength || n.length > maxLength) {
+    return { kind: "whole", oldText: cur, newText: our, before: "", after: "", hint: null };
+  }
+  if (!o) {
+    const where = prefix.trim() ? `after ${q(lead(prefix))}` : "at the start of the paragraph";
+    return { kind: "insert", oldText: "", newText: n, before, after, hint: `Insert ${q(n)} ${where}` };
+  }
+  if (!n) return { kind: "delete", oldText: o, newText: "", before, after, hint: `Delete ${q(o)}` };
+  return { kind: "replace", oldText: o, newText: n, before, after, hint: `Replace ${q(o)} with ${q(n)}` };
+}
+
+/**
  * Attach the nearest preceding heading to each unit, so the model and the
  * reviewer know which clause a change sits in. A "heading" is a short
  * paragraph that starts with a clause number or is in title-like form.

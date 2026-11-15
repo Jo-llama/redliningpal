@@ -76,11 +76,13 @@ Add-on*, one test per Doc, config *Installed and enabled*, *Latest code*.
 | F1 | Panel | Red badge "1 change without track changes", red "Do not use Accept all yet" | ✅ |
 | F2 | Card | Clause 4 · modified · REJECT · RISK HIGH; their text "…in case of intent."; our base "…in case of intent or fraud." | ✅ |
 | F3 | Go to | Doc scrolls to 4.4, passage selected | ✅ |
-| F4 | Copy our wording, paste in Suggesting mode over 4.4 | A suggestion (Replace … with … intent or fraud) under the lawyer's name | ✅ |
+| F4 | Card shows "Suggested edit: Insert “or fraud” after “…in case of intent”" | Buttons Go to · Mark the spot · Copy “or fraud” | ✅ |
+| F4a | Suggesting mode on, Mark the spot, Copy, paste (Ctrl+V) | A suggestion that inserts only "or fraud" before the full stop, under the lawyer's name. Check whether the cursor survives the switch from the sidebar to the document (if not: note it) | ✅ suggestion inserted only "or fraud" (whether a click into the Doc was needed was not recorded) |
+| F4b | (before the minimal edit, 2026-11-15) Copy our wording, paste over 4.4 | Suggestion replacing the whole sentence | ✅ |
 | F5 | I have reviewed these changes | Green "Acknowledged <date> UTC"; server audit `ack_untracked` | ✅ |
 | F6 | Check again after F5 | Stays green (acknowledgement is on the version, not the session) | – |
 
-Known: F4 replaces the whole sentence; a minimal edit ("insert *or fraud* after *intent*") is a planned improvement.
+A large change (over 200 characters) still shows "Copy our wording" for the whole text.
 
 ## G. Triage of an unknown Doc
 

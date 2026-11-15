@@ -10,6 +10,7 @@ import vm from "node:vm";
 import JSZip from "jszip";
 import { buildVersionView, OUT as VIEW_OUT } from "../scripts/build-gdocs.js";
 import { versionView } from "../public/lib/version-view.js";
+import { suggestionEdit } from "../public/lib/diff.js";
 const CODE = readFileSync(new URL("../gdocs/Code.gs", import.meta.url), "utf8");
 const TOKEN = "gdocs-test-token-".padEnd(40, "x");
 const EXPORT = readFileSync(new URL("./fixtures/gdocs/spa_v2_gdocs_export.docx", import.meta.url));
@@ -27,14 +28,17 @@ const response = (code, body, bytes) => ({
 /** Fake of the open Doc: findText over `text`, selection recorded. */
 function fakeDoc(text = "") {
   const doc = {
-    selection: null, patterns: [],
+    selection: null, cursor: null, patterns: [],
+    textEl: { getText: () => text },
+    newPosition: (el, offset) => ({ el, offset }),
+    setCursor: (p) => { doc.cursor = p; },
     getId: () => "doc-123",
     getName: () => "Escrow draft\n(copy)",
     getBody: () => ({
       findText: (pattern) => {
         doc.patterns.push(pattern);
         const m = new RegExp(pattern).exec(text);
-        return m && { getElement: () => ({ asText: () => "text-el" }), getStartOffset: () => m.index, getEndOffsetInclusive: () => m.index + m[0].length - 1 };
+        return m && { getElement: () => ({ asText: () => doc.textEl }), getStartOffset: () => m.index, getEndOffsetInclusive: () => m.index + m[0].length - 1 };
       },
     }),
     newRange: () => {
@@ -222,6 +226,9 @@ test("build: gdocs/VersionView.html is generated from version-view.js and up to 
     },
   };
   assert.deepEqual(structuredClone(box.RPView.versionView(identify, { hasTrackedChanges: false })), versionView(identify, { hasTrackedChanges: false }));
+  for (const [a, b] of [["in case of intent.", "in case of intent or fraud."], ["Date and on the Closing Date.", "Date."], ["five (5) years", "three (3) years"]]) {
+    assert.deepEqual(structuredClone(box.RPView.suggestionEdit(a, b)), suggestionEdit(a, b));
+  }
 });
 
 test("go to: escapes regex characters, tolerates whitespace, cuts long text at a word", () => {
@@ -231,6 +238,7 @@ test("go to: escapes regex characters, tolerates whitespace, cuts long text at a
   assert.ok(!doc.patterns[0].includes("terms"), "cut at 80 characters, on a word boundary");
   assert.match(doc.patterns[0], /\\\(de\\s\+minimis\\\);/);
   assert.equal(doc.selection[0][1], 0);
+  assert.equal(doc.selection[0][0], doc.textEl);
   assert.equal(gs.goToText("5.1 Claims become time-barred"), false);
   assert.equal(gs.goToText("   "), false);
   assert.equal(doc.patterns.length, 2, "empty text: no search");
@@ -314,4 +322,50 @@ test("end to end: a counter-draft goes through triage and becomes v3 on base v2.
   const r = structuredClone(gs.identifyOpenDoc());
   assert.equal(r.status, "exact");
   assert.equal(r.timeline.current.label, "v3");
+});
+
+// ---- minimal suggestion: cursor or exact selection ---------------------------------------
+
+const P44 = "4.4 None of the limitations in this Clause 4 apply in case of intent.";
+
+test("place suggestion: insertion puts the cursor between 'intent' and '.'", () => {
+  const text = `4.3 Cap.\n${P44}\n5.1 Claims.`;
+  const { gs, doc } = load(() => assert.fail("no request expected"), {}, { doc: fakeDoc(text) });
+  const e = suggestionEdit(P44, P44.replace("intent.", "intent or fraud."));
+  assert.equal(gs.placeSuggestion({ kind: e.kind, before: e.before, oldText: e.oldText, after: e.after }), true);
+  assert.equal(doc.cursor.el, doc.textEl);
+  assert.equal(text.slice(0, doc.cursor.offset).endsWith("in case of intent"), true);
+  assert.equal(text[doc.cursor.offset], ".");
+  assert.equal(doc.selection, null, "insert: cursor only, nothing selected");
+});
+
+test("place suggestion: replace and delete select exactly the old text, despite extra spaces", () => {
+  const text = "4.1 The Seller is not liable for claims below EUR   100,000 (de minimis). 3.1 accurate on the Signing Date and on the Closing Date.";
+  const { gs, doc } = load(() => assert.fail("no request expected"), {}, { doc: fakeDoc(text) });
+  const r = suggestionEdit("not liable for claims below EUR 100,000 (de minimis).", "not liable for claims below EUR 25,000 (de minimis).");
+  assert.equal(gs.placeSuggestion(r), true);
+  const [[, from, to]] = doc.selection;
+  assert.equal(text.slice(from, to + 1), "100,000");
+
+  const d = suggestionEdit("accurate on the Signing Date and on the Closing Date.", "accurate on the Signing Date.");
+  assert.equal(gs.placeSuggestion(d), true);
+  const [[, f2, t2]] = doc.selection;
+  assert.equal(text.slice(f2, t2 + 1), " and on the Closing Date");
+});
+
+test("place suggestion: regex characters are literal; not found or invalid -> false, nothing changed", () => {
+  const text = "Fee: $5 (approx.) [see Annex 3.1] payable now.";
+  const { gs, doc } = load(() => assert.fail("no request expected"), {}, { doc: fakeDoc(text) });
+  const e = suggestionEdit(text, text.replace("payable now", "payable within 30 days"));
+  assert.equal(gs.placeSuggestion(e), true);
+  const [[, from, to]] = doc.selection;
+  assert.equal(text.slice(from, to + 1), "now");
+
+  doc.selection = null;
+  assert.equal(gs.placeSuggestion({ kind: "insert", before: "not in this document", oldText: "", after: "." }), false);
+  assert.equal(gs.placeSuggestion({ kind: "whole", before: "Fee", oldText: "", after: "" }), false);
+  assert.equal(gs.placeSuggestion({ kind: "delete", before: "Fee:", oldText: "  ", after: "$5" }), false);
+  assert.equal(gs.placeSuggestion(null), false);
+  assert.equal(doc.selection, null);
+  assert.equal(doc.cursor, null);
 });
