@@ -3,7 +3,8 @@
 Your companion for contract negotiations: tracks every version the counterparty
 sends, compares it with the right version of ours, checks each change against a
 negotiation playbook (LLM + deterministic harness), and lets the lawyer accept,
-reject, comment or counter-propose directly in Word.
+reject, comment or counter-propose directly in Word. A Google Docs add-on shows the
+same version timeline (read and warn only: Docs has no API for suggestions).
 
 Portfolio project (legal engineering / LLM harness). Synthetic data only:
 never add real client contracts, names or emails.
@@ -15,13 +16,17 @@ never add real client contracts, names or emails.
   - `diff.js`: paragraph alignment (clean-copy compare), word diff, minimal edit
   - `review.js`: prompt, forced tool schema `report_findings`, guardrails, `validateFindings`, mock reviewer
   - `version-view.js`: version panel view model, "accept all" gate, untracked units -> review cards
-- Server: `server.js` only starts it (HTTPS via office-addin-dev-certs; `HTTP_ONLY=1` for tests) and the
-  Gmail poller. Routes live in `server/app.js` as `createApp(ctx, { root, preview, audit })`; tests drive
-  it over HTTP with an injected `audit` (`tests/api.test.js`).
+- Server: `server.js` only starts it (HTTPS via office-addin-dev-certs; `HTTP_ONLY=1` for tests), the
+  optional Google Docs listener and the Gmail poller. Routes live in `server/app.js` as
+  `createApp(ctx, { root, preview, audit, token })`; tests drive it over HTTP with an injected `audit`
+  (`tests/api.test.js`). With `token`: API only (no static files, no preview), bearer check
+  (constant-time, min 32 chars, else createApp throws). `server.js` starts that variant on
+  `127.0.0.1:$GDOCS_PORT` when `GDOCS_PORT` is set, using `REDLINE_API_TOKEN`; the Word port has no token.
   - `/api/review`: Claude proxy (key stays server-side), mock mode without `ANTHROPIC_API_KEY`
   - `/api/intake`: raw RFC 822 email -> `server/intake.js`
   - `/api/matters`, `/api/triage` (+ `/:id/assign`, `/:id/bases`)
-  - `/api/documents/identify` (pane sends paragraph texts + stamp), `/api/documents/triage` (unknown .docx)
+  - `/api/documents/identify` (pane sends paragraph texts + stamp), `/api/documents/identify-file`
+    (whole .docx, used by Google Docs), `/api/documents/triage` (unknown .docx)
   - `/api/versions/:id/{file,timeline,untracked,ack-untracked}`
 - Intake pipeline (`server/`): `routing.js` (matter scoring: stamp, thread, subject tag, sender,
   text match; triage below threshold), `matching.js` (base detection by text, renditions),
@@ -39,17 +44,34 @@ never add real client contracts, names or emails.
   (`untrackedAck` on the version, audited, final). Review mode follows the OPEN document.
 - Unknown document from Word: triage item `kind: "document"`; registered only after a lawyer
   confirms matter, side and base (`registerDocument` in intake.js). Never automatic.
+- Google Docs add-on (`gdocs/`, Apps Script V8 Editor add-on, plain globals, no modules):
+  - `Code.gs`: settings in user properties, the ONLY place holding the token; exports the open Doc
+    via the Docs export link (not the Drive REST API) and posts it to `identify-file`; open base version
+    = Advanced Drive v3 `Files.create` converting the .docx, cached per version id; go to (findText);
+    triage. Sidebar calls it via `google.script.run`.
+  - `Sidebar.html`: UI; includes `VersionView.html`, GENERATED from `public/lib/version-view.js` by
+    `scripts/build-gdocs.js` (never edit it by hand).
+  - Scopes: documents.currentonly, drive.readonly (export; drive.file alone = 403), drive.file,
+    script.external_request, script.container.ui.
+  - Tests: `tests/gdocs-client.test.js` (Code.gs in node:vm with fake Apps Script services, plus end to
+    end against the token app in `tests/gdocs-test-server.js`), `tests/gdocs-sidebar.test.js` (jsdom).
+    Manual checklist: `docs/gdocs-manual-test.md`.
 - Playbooks: `playbooks/*.json` (`mutual-nda`, `spa-share-deal`). Samples: `samples/`, `samples/spa/`.
-  Email fixtures: `tests/fixtures/emails/`.
+  Email fixtures: `tests/fixtures/emails/`. Google Docs export fixture: `tests/fixtures/gdocs/`.
 
 ## Commands
-- `npm test`: node:test, must stay green (59 tests)
+- `npm test`: node:test, must stay green (86 tests)
 - `npm run intake -- tests/fixtures/emails/*.eml`: run intake and print the matter timeline (delete `data/` to reset)
 - `npm run fixtures`: regenerate SPA samples + .eml fixtures (Python, python-docx)
 - `npm start`: HTTPS server on :3000. `PREVIEW=1 HTTP_ONLY=1 npm start` + `/preview.html` = task pane without Word
   (`?doc=spa/spa_v2-1_theirs_corrected.docx` after running intake shows the version panel; use
   `REDLINE_DATA=<tmp dir>` for both to keep `data/` clean)
 - `npm run stamp -- in.docx`: stamp an outgoing draft
+- `HTTP_ONLY=1 GDOCS_PORT=3001 REDLINE_API_TOKEN=<32+ chars> npm start` + `cloudflared tunnel --url
+  http://127.0.0.1:3001` (binary in `~/.local/bin`): server for the Google Docs add-on
+- `npm run gdocs:build`: regenerate `gdocs/VersionView.html` (a test fails if it is stale)
+- `npm run gdocs:push`: build + `clasp push` the four add-on files (`gdocs/.clasp.json` holds the
+  script id, git-ignored; clasp login is Jo's, in `~/.clasprc.json`)
 
 ## Principles
 - Guardrails may only escalate a verdict, never relax it. Every model output passes `validateFindings`.
@@ -57,6 +79,9 @@ never add real client contracts, names or emails.
 - Never log contract text; audit lines carry ids, counts and verdicts only.
 - Keep logic in pure, tested modules; Office.js glue stays thin.
 - Model id from `REDLINE_MODEL` (default `claude-sonnet-5-5`).
+- Google Docs: the add-on never edits the document (its edits would be untracked changes); the
+  "accept all" gate there is advisory. Server data in the sidebar only via `textContent`. The token
+  never leaves `Code.gs`; check the settings before exporting anything.
 
 ## Working with me (Jo)
 - Explain the plan before larger changes and name which files you will touch.
@@ -64,4 +89,4 @@ never add real client contracts, names or emails.
 - If I ask about a step, explain it, then return to the sequence.
 - Add or update tests with every behaviour change; run `npm test` before saying something is done.
 - Do not commit or push unless I ask. Commit messages in English.
-- Environment: WSL Ubuntu 20.04, repo at /home/joanna/code/Jo-llama/redliningPal. Node via nvm (not apt).
+- Environment: WSL Ubuntu 20.04, repo at /home/joanna/code/Jo-llama/redliningpal. Node via nvm (not apt).

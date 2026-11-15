@@ -4,6 +4,8 @@
 
 The counterparty can send their changes as **tracked changes**, or as a **clean copy**. For a clean copy, the add-in compares it with your last version. Each change goes to an LLM with the playbook, and the answer passes through a deterministic harness. You then work through the findings in the task pane: **accept**, **reject**, **comment**, or **counter-propose**. Counter-proposals are written into the document as *your* tracked changes, touching only the words that differ.
 
+There is also a **Google Docs add-on** with the version panel, the base version and the untracked-change cards. Google Docs gives scripts no way to accept, reject or create suggestions, so there the add-on warns and the lawyer acts. See [Google Docs add-on](#google-docs-add-on).
+
 ![Task pane](docs/taskpane.png)
 
 ## Why it is built this way
@@ -21,7 +23,7 @@ The counterparty can send their changes as **tracked changes**, or as a **clean 
 
 ```
 manifest.xml                 Office add-in manifest (adds a button on the Review tab)
-server.js                    Starts the HTTPS server and the Gmail poller
+server.js                    Starts the HTTPS server, the optional Google Docs API port and the Gmail poller
 server/app.js                Routes: task pane, review proxy, intake API, version timeline, triage
 server/intake.js             Email -> matter -> version -> base -> integrity check -> review
 server/timeline.js           Which version is open in Word; base / supersedes / newer around it
@@ -43,7 +45,12 @@ public/lib/review.js         Prompt, tool schema, guardrails, validator, mock re
 public/lib/version-view.js   Version panel, "accept all" gate, untracked changes as cards
 playbooks/mutual-nda.json    Sample playbook: 9 rules with preferred / fallback / never
 samples/                     Sample NDA: our v1, counterparty v2 tracked, v2 clean
+gdocs/                       Google Docs add-on (Apps Script): Code.gs, Sidebar.html, appsscript.json,
+                             VersionView.html (generated from public/lib/version-view.js)
+scripts/build-gdocs.js       Generates gdocs/VersionView.html (npm run gdocs:build)
+docs/gdocs-manual-test.md    Manual test checklist for the Google Docs add-on
 tests/                       Unit tests + Office.js stub for browser preview
+tests/fixtures/gdocs/        A real Google Docs export of the synthetic SPA v2
 ```
 
 ## Setup, step by step
@@ -55,7 +62,7 @@ Requires Node 18+.
 ```bash
 cd redlining-pal
 npm install
-npm test            # 59 tests should pass
+npm test            # 86 tests should pass
 ```
 
 ### 2. Trust a localhost certificate
@@ -188,10 +195,98 @@ If your own CC copy does not appear under the label, Gmail has hidden a copy add
 | GET | `/api/versions/:id/untracked` | Changes made without track changes, as review cards |
 | POST | `/api/versions/:id/ack-untracked` | Record that a lawyer reviewed them (unblocks bulk accept; audited) |
 | POST | `/api/documents/identify` | `{ afterTexts, beforeTexts, stamp }` of the open document → exact / probable / unknown + timeline |
+| POST | `/api/documents/identify-file` | The whole .docx as body (Google Docs add-on) → same answer, plus `opened: { hasTrackedChanges, stamped }` |
 | POST | `/api/documents/triage` | Unknown .docx as body → triage item (409 if already registered) |
 | GET | `/api/triage` | Mails and documents that could not be assigned automatically |
 | GET | `/api/triage/:id/bases?matterId=&side=` | Suggested bases for a document triage item |
 | POST | `/api/triage/:id/assign` | Mail: `{ "matterId" }`, re-processes the mail. Document: `{ "matterId", "side": "ours" \| "theirs", "baseId"? }`, registers it. |
+
+With `GDOCS_PORT` and `REDLINE_API_TOKEN` set, the server starts a second listener on `127.0.0.1:<GDOCS_PORT>` for the Google Docs add-on. It serves the API only (no task pane, samples or playbooks) and answers 401 unless the request carries `Authorization: Bearer <token>`. It refuses to start with a token shorter than 32 characters. The Word port is unchanged and needs no token.
+
+## Google Docs add-on
+
+The counterparty's .docx often ends up in Google Drive. The add-on brings the version timeline there: the lawyer opens the file in Google Docs and sees which version it is, its base and whether anything was changed without track changes.
+
+### What it does, compared with Word
+
+| | Word task pane | Google Docs sidebar |
+|---|---|---|
+| Matter, version, base, supersedes, "newer version" warning | ✅ | ✅ same logic (`version-view.js`, built into `gdocs/VersionView.html`) |
+| Open base version | new Word window | Google Doc copy in your Drive, opened from a link; reused on the next click |
+| Changes without track changes | cards; **Accept all is blocked** until acknowledged | cards with **Go to** and **Copy our wording**; a red **advisory** warning until acknowledged. Accept all in Google Docs cannot be blocked. |
+| Accept / reject / counter-propose | written as tracked changes | not possible from a script; the lawyer pastes our wording in **Suggesting mode**, which makes it a normal suggestion |
+| Unknown document | triage, confirmed by the lawyer | same flow |
+| Playbook review of each tracked change | ✅ | not yet (the server's analysis of registered versions exists; a sidebar view of it is an idea) |
+
+How it identifies the open Doc: Apps Script exports it as .docx (exactly like *File → Download → Microsoft Word*) and sends the file to `/api/documents/identify-file`. We checked by hand that a Google Docs export keeps every tracked change as a suggestion and back, the paragraph texts, and our `rc-ver` stamp (Google hides the stamp in *File → Details* but writes it back on export). So the server needs no Google-specific parsing.
+
+### Setup, step by step
+
+Remaining steps: **1 Server → 2 Tunnel → 3 Apps Script project → 4 Push → 5 Test deployment → 6 Settings**
+
+1. **Server with a token.** Google's servers cannot reach `localhost`, so the add-on talks to a second, token-protected port that a tunnel exposes.
+   ```bash
+   export REDLINE_DATA=~/redline-gdocs-demo           # optional: keep data/ clean
+   npm run intake -- tests/fixtures/emails/*.eml      # demo matter SPA-Nordlicht
+   export REDLINE_API_TOKEN=$(node -e 'console.log(require("crypto").randomBytes(24).toString("base64url"))')
+   echo $REDLINE_API_TOKEN                            # you need it in step 6
+   HTTP_ONLY=1 GDOCS_PORT=3001 npm start
+   ```
+2. **Tunnel** (second terminal). cloudflared is a single binary; no apt, no account:
+   ```bash
+   mkdir -p ~/.local/bin && curl -L -o ~/.local/bin/cloudflared https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 && chmod +x ~/.local/bin/cloudflared
+   ~/.local/bin/cloudflared tunnel --url http://127.0.0.1:3001
+   ```
+   Copy the `https://….trycloudflare.com` address. It changes every time the tunnel starts. Check it: `curl <address>/api/matters` must answer 401.
+3. **Apps Script project.** At [script.google.com](https://script.google.com) create a new project `redliningPal`. Turn on *Google Apps Script API* at [script.google.com/home/usersettings](https://script.google.com/home/usersettings).
+4. **Push the code** with clasp (a dev dependency):
+   ```bash
+   npx clasp login --no-localhost       # sign in; the browser then shows "localhost refused to connect":
+                                        # copy that page's full URL into the terminal (never share it)
+   npx clasp list                       # shows the script id of redliningPal
+   cp gdocs/.clasp.json.example gdocs/.clasp.json   # once; put the script id in (git-ignored)
+   npm run gdocs:push                   # builds VersionView.html, pushes the 4 add-on files
+   ```
+   Without clasp, paste `Code.gs`, `Sidebar.html`, `VersionView.html` and `appsscript.json` into the editor (*+ → HTML* for the two HTML files; *Project Settings → Show appsscript.json*).
+5. **Test deployment, once per Doc.** Upload a sample .docx to Drive and convert it (*File → Save as Google Docs*). In the script editor: *Deploy → Test deployments → Editor Add-on → Create new test*, version *Latest code*, config *Installed and enabled*, pick the Doc, *Execute*. Google warns that the app is unverified: it is your own script, so *Advanced → Go to redliningPal*.
+6. **Settings.** In the Doc: *Extensions → redliningPal → Open version panel → Settings*: tunnel address and token. They are stored in your Google user properties for this script, never in the Doc or the repo, and the token never reaches the sidebar.
+
+Try it with the converted `samples/spa/spa_v2-1_theirs_corrected.docx`: v2.1, base v1, supersedes v2, and one card for clause 4.4, where "or fraud" was deleted without track changes. The full checklist is in [docs/gdocs-manual-test.md](docs/gdocs-manual-test.md).
+
+### Permissions, and why
+
+| Scope | Why |
+|---|---|
+| `documents.currentonly` | read the open Doc's id and name, sidebar, go to a passage |
+| `drive.readonly` | export the open Doc as .docx. `drive.file` alone gets HTTP 403 for a Doc the add-on did not create. |
+| `drive.file` | create the "Open base version" copy (Advanced Drive service v3, converts .docx to a Google Doc) |
+| `script.external_request` | call the tunnel |
+| `script.container.ui` | show the sidebar |
+
+The export uses the Docs export link (`docs.google.com/document/d/<id>/export?format=docx`), not the Drive REST API: the REST call needs the Drive API enabled in the script's hidden Cloud project and fails with 403 otherwise.
+
+### Data flow and privacy
+
+```
+Google Doc ─► Apps Script (Google) ─► cloudflared (Cloudflare) ─► 127.0.0.1:3001 on your machine
+```
+The whole document passes through Google's Apps Script runtime and the tunnel provider. That is fine for the synthetic samples; it is **not** a setup for client documents. Quick tunnels have no uptime guarantee and are subject to Cloudflare's terms. The server's audit lines for the add-on (`identify_file`, `ack_untracked`, `triage_assign`) carry ids, scores and counts, never contract text. Stop the tunnel (Ctrl+C) when you are done.
+
+### Troubleshooting
+
+| Message in the sidebar | Fix |
+|---|---|
+| Not set up yet | Settings: tunnel address and token |
+| The server rejected the token | Token in Settings ≠ `REDLINE_API_TOKEN` of the running server |
+| Server not reachable… | Server or tunnel stopped, or the tunnel address changed: update Settings |
+| The server sent no JSON | The address is not the token port (for example the Word port, or a tunnel to the wrong port) |
+| Google refused to export this document (HTTP 403…) | `appsscript.json` lacks `drive.readonly`; push it and approve the new permission |
+| Could not create the Google Doc copy | In the script editor, *Services + → Drive API*, then try again |
+| Menu entry appears twice | An old copy of the script is bound to the Doc (*Extensions → Apps Script*); delete it |
+
+### Why not "Extensions → Add-ons → Get add-ons"?
+
+That menu lists add-ons published in the Google Workspace Marketplace. Publishing publicly means Google's review, and `drive.readonly` is a restricted scope with an additional security assessment. Publishing privately to an organisation needs a Google Workspace account. For a demo, test deployments are enough. A **Google Workspace add-on** (card UI instead of an HTML sidebar) could be installed once and appear in every Doc without publishing; see the ideas below.
 
 ## Writing your own playbook
 Add a JSON file to `playbooks/`. Each rule has these fields:
@@ -220,6 +315,13 @@ Intake limits:
 - The open document is matched by paragraph text. A "probable" match needs 60% of its paragraphs to come from one version. Heavily rewritten drafts, or two matters on the same template, may need the lawyer to confirm. Close matches are flagged.
 - The untracked-changes acknowledgement records when, not who: the prototype has no user accounts.
 
+Google Docs limits:
+- Scripts cannot accept, reject or create suggestions (Google Docs API), so the "accept all" gate is a warning, and counter-proposals are pasted by the lawyer in Suggesting mode. The add-on never edits the document itself: its edits would be changes without track changes.
+- Pasting "our wording" replaces the whole sentence, not just the words that differ.
+- The add-on runs as a test deployment, one per Doc (see above).
+- It needs a tunnel and a running local server; the quick tunnel address changes on every restart.
+- Comments can be added by the lawyer as usual; the add-on does not create them.
+
 ## Next steps (ideas)
 - "Reopened" flag: the counterparty changes a clause that was agreed in an earlier round
 - LLM intent classification behind the rules (output limited to the same enum)
@@ -228,3 +330,7 @@ Intake limits:
 - Export a negotiation log (change, verdict, action taken) as .xlsx for the matter file
 - Per-rule fallback ladders (first, second, final position) across negotiation rounds
 - Run the model on Azure/Bedrock in an EU region for client-data compliance
+- Google Docs: show only the words to change ("insert *or fraud* after *intent*") using the minimal edit from `diff.js`, instead of the whole sentence
+- Google Docs: rebuild the sidebar as a Google Workspace add-on (card UI), installable once for all Docs without Marketplace publishing
+- Google Docs: playbook findings for each suggestion in the sidebar, read-only
+- A named Cloudflare tunnel or a hosted server (e.g. Cloud Run) instead of the quick tunnel
