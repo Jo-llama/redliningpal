@@ -272,3 +272,81 @@ test("sidebar: saving settings clears the token field and checks the document", 
   assert.equal($("settingsMsg").textContent, "Saved.");
   assert.ok(calls.some((c) => c[0] === "identifyOpenDoc"));
 });
+
+// ---- playbook review ------------------------------------------------------------------------
+
+const finding = (verdict, extra = {}) => ({ verdict, risk: "medium", ruleIds: ["SPA-04"], rationale: "why", counterProposal: null, comment: "Please keep our wording.", flags: [], ...extra });
+const reviewUnit = (id, verdict, state, extra = {}) => ({
+  id, source: "tracked", kind: "modified", section: "4. Limitation of Liability", status: "new", state,
+  before: "4.1 claims below EUR 25,000.", after: "4.1 claims below EUR 100,000.", finding: finding(verdict), ...extra,
+});
+const findingsRes = (units) => ({ versionId: "id-v21", playbook: "spa-share-deal@2026-11", mode: "mock", model: null, reviewedAt: "2026-11-12T10:00:00Z", units });
+
+test("review: summary, progress, reject first; handled hidden until 'Show handled'", async () => {
+  const { $, window, settle: s } = await open({
+    ...configured, identifyOpenDoc: () => v21(), getUntracked: () => untrackedCards,
+    getFindings: () => findingsRes([
+      reviewUnit("U1", "negotiate", "open"), reviewUnit("U2", "reject", "open"),
+      reviewUnit("U3", "accept", "accepted"), reviewUnit("U7", "reject", "open", { source: "untracked" }),
+    ]),
+  });
+  await s();
+  assert.ok(visible($("review")));
+  assert.equal($("reviewSummary").textContent, "3 changes · 1 reject · 1 negotiate · 1 accept");
+  assert.equal($("reviewProgress").textContent, "1 of 3 handled");
+  assert.match($("reviewSource").textContent, /^Playbook spa-share-deal@2026-11, mock reviewer/);
+  const heads = () => [...$("reviewCards").querySelectorAll(".card .verdict")].map((n) => n.textContent.split(" ")[0]);
+  assert.deepEqual(heads(), ["reject", "negotiate"]);
+  assert.match($("reviewCards").textContent, /1 handled change hidden\./);
+  $("showHandled").checked = true;
+  $("showHandled").dispatchEvent(new window.Event("change"));
+  assert.deepEqual(heads(), ["reject", "negotiate", "accept"]);
+  assert.match($("reviewCards").textContent, /Accepted/);
+});
+
+test("review card: diff, steps, Go to falls back to our text, minimal edit and comment buttons", async () => {
+  const { $, calls, settle: s } = await open({
+    ...configured, identifyOpenDoc: () => v21(), getUntracked: () => untrackedCards,
+    getFindings: () => findingsRes([reviewUnit("U1", "negotiate", "open", { finding: finding("negotiate", { counterProposal: "4.1 claims below EUR 50,000." }) })]),
+    goToText: (t) => t.includes("25,000"), placeSuggestion: () => true,
+  });
+  await s();
+  const card = $("reviewCards").querySelector(".card");
+  assert.equal(card.querySelector("del").textContent, "25,000.");
+  assert.equal(card.querySelector("ins").textContent, "100,000.");
+  assert.deepEqual([...card.querySelectorAll("ol.steps li")].map((li) => li.textContent),
+    ["Reject their suggestion (✗ in the margin).", "Then, in Suggesting mode: Replace “25,000” with “50,000”."]);
+  assert.deepEqual([...card.querySelectorAll("button")].map((b) => b.textContent), ["Go to", "Mark the text", "Copy “50,000”", "Copy comment"]);
+
+  card.querySelectorAll("button")[0].click();
+  await s();
+  assert.deepEqual(calls.filter((c) => c[0] === "goToText").map((c) => c[1]), ["4.1 claims below EUR 100,000.", "4.1 claims below EUR 25,000."]);
+  assert.equal(card.querySelector("div.muted:last-child").textContent, "", "found on the second try");
+  card.querySelectorAll("button")[1].click();
+  await s();
+  assert.deepEqual({ ...calls.find((c) => c[0] === "placeSuggestion")[1] }, { kind: "replace", before: "4.1 claims below EUR ", oldText: "25,000", after: "." });
+  card.querySelectorAll("button")[3].click();
+  assert.match(card.textContent, /Copied\. Add it as a comment on their suggestion \(Ctrl\+Alt\+M\)\./);
+});
+
+test("review: refresh asks again; server text in a card is never HTML; errors are shown in the section", async () => {
+  let n = 0;
+  const { $, window, calls, settle: s } = await open({
+    ...configured, identifyOpenDoc: () => v21(), getUntracked: () => untrackedCards,
+    getFindings: () => (n++ ? findingsRes([reviewUnit("U1", "reject", "rejected")])
+      : findingsRes([reviewUnit("U1", "reject", "open", { section: XSS, finding: finding("reject", { rationale: XSS, ruleIds: [XSS] }) })])),
+  });
+  await s();
+  assert.equal(window.document.querySelectorAll("img").length, 0);
+  assert.match($("reviewCards").textContent, /<img src=x onerror=/);
+  assert.equal(window.__pwned, undefined);
+  $("reviewRefresh").click();
+  await s();
+  assert.equal(calls.filter((c) => c[0] === "getFindings").length, 2);
+  assert.equal($("reviewProgress").textContent, "1 of 1 handled ✓");
+
+  const failing = await open({ ...configured, identifyOpenDoc: () => v21(), getUntracked: () => untrackedCards,
+    getFindings: () => { throw new Error("Exception: Server error: not a readable .docx"); } });
+  await failing.settle();
+  assert.equal(failing.$("reviewCards").textContent, "Server error: not a readable .docx");
+});

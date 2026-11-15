@@ -17,7 +17,9 @@ never add real client contracts, names or emails.
     (smallest insert/delete/replace + context words, refined to characters only for pure insert/delete;
     used by the Google Docs card, inlined into `gdocs/VersionView.html` by the build)
   - `review.js`: prompt, forced tool schema `report_findings`, guardrails, `validateFindings`, mock reviewer
-  - `version-view.js`: version panel view model, "accept all" gate, untracked units -> review cards
+  - `version-view.js`: version panel view model, "accept all" gate, untracked units -> review cards,
+    `reviewCards` (Google Docs playbook review: order, summary, steps per verdict; counter-proposal =
+    reject theirs, then `suggestionEdit` from our text)
 - Server: `server.js` only starts it (HTTPS via office-addin-dev-certs; `HTTP_ONLY=1` for tests), the
   optional Google Docs listener and the Gmail poller. Routes live in `server/app.js` as
   `createApp(ctx, { root, preview, audit, token })`; tests drive it over HTTP with an injected `audit`
@@ -29,7 +31,9 @@ never add real client contracts, names or emails.
   - `/api/matters`, `/api/triage` (+ `/:id/assign`, `/:id/bases`)
   - `/api/documents/identify` (pane sends paragraph texts + stamp), `/api/documents/identify-file`
     (whole .docx, used by Google Docs), `/api/documents/triage` (unknown .docx)
-  - `/api/versions/:id/{file,timeline,untracked,ack-untracked}`
+  - `/api/versions/:id/{file,timeline,untracked,ack-untracked}`, `POST /api/versions/:id/findings`
+    (current .docx in -> stored findings + state per change, `server/findings.js`: open / countered /
+    accepted / rejected / changed, matched per paragraph by text)
 - Intake pipeline (`server/`): `routing.js` (matter scoring: stamp, thread, subject tag, sender,
   text match; triage below threshold), `matching.js` (base detection by text, renditions),
   `intent.js` (corrected / for signature, DE/EN/PL rules), `store.js` (JSON registry +
@@ -62,7 +66,7 @@ never add real client contracts, names or emails.
   Email fixtures: `tests/fixtures/emails/`. Google Docs export fixture: `tests/fixtures/gdocs/`.
 
 ## Commands
-- `npm test`: node:test, must stay green (96 tests)
+- `npm test`: node:test, must stay green (110 tests)
 - `npm run intake -- tests/fixtures/emails/*.eml`: run intake and print the matter timeline (delete `data/` to reset)
 - `npm run fixtures`: regenerate SPA samples + .eml fixtures (Python, python-docx)
 - `npm start`: HTTPS server on :3000. `PREVIEW=1 HTTP_ONLY=1 npm start` + `/preview.html` = task pane without Word

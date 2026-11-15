@@ -9,7 +9,7 @@ import { spawn, spawnSync } from "node:child_process";
 import vm from "node:vm";
 import JSZip from "jszip";
 import { buildVersionView, OUT as VIEW_OUT } from "../scripts/build-gdocs.js";
-import { versionView } from "../public/lib/version-view.js";
+import { versionView, reviewCards } from "../public/lib/version-view.js";
 import { suggestionEdit } from "../public/lib/diff.js";
 const CODE = readFileSync(new URL("../gdocs/Code.gs", import.meta.url), "utf8");
 const TOKEN = "gdocs-test-token-".padEnd(40, "x");
@@ -226,6 +226,8 @@ test("build: gdocs/VersionView.html is generated from version-view.js and up to 
     },
   };
   assert.deepEqual(structuredClone(box.RPView.versionView(identify, { hasTrackedChanges: false })), versionView(identify, { hasTrackedChanges: false }));
+  const res = { playbook: "p@1", mode: "mock", units: [{ id: "U1", source: "tracked", kind: "modified", state: "open", before: "EUR 25,000.", after: "EUR 100,000.", finding: { verdict: "negotiate", counterProposal: "EUR 50,000." } }] };
+  assert.deepEqual(structuredClone(box.RPView.reviewCards(res)), reviewCards(res));
   for (const [a, b] of [["in case of intent.", "in case of intent or fraud."], ["Date and on the Closing Date.", "Date."], ["five (5) years", "three (3) years"]]) {
     assert.deepEqual(structuredClone(box.RPView.suggestionEdit(a, b)), suggestionEdit(a, b));
   }
@@ -368,4 +370,29 @@ test("place suggestion: regex characters are literal; not found or invalid -> fa
   assert.equal(gs.placeSuggestion(null), false);
   assert.equal(doc.selection, null);
   assert.equal(doc.cursor, null);
+});
+
+// ---- playbook review ---------------------------------------------------------------------
+
+test("findings: exports the Doc and posts it for the version; invalid ids are refused before export", () => {
+  const { gs, calls } = load((url, p) => exportOk(url, p) || response(200, { units: [] }), configured);
+  gs.getFindings("ver-21");
+  assert.equal(calls[0].url, "https://docs.google.com/document/d/doc-123/export?format=docx");
+  assert.equal(calls[1].url, "https://demo.trycloudflare.com/api/versions/ver-21/findings");
+  assert.equal(calls[1].params.contentType, "application/octet-stream");
+  assert.equal(calls[1].params.payload.length, EXPORT.length);
+  assert.throws(() => gs.getFindings("../matters"), /Invalid version id/);
+  assert.equal(calls.length, 2);
+});
+
+test("end to end: v2.1 in Google Docs -> 12 playbook cards, all open, reject first", () => {
+  const fake = "https://tunnel.test";
+  const v21 = sample("spa/spa_v2-1_theirs_corrected.docx");
+  const { gs } = load((url, p) => exportOf(v21)(url) || syncFetch(url.replace(fake, baseUrl), p), { ...configured, RP_SERVER_URL: fake });
+  const id = structuredClone(gs.identifyOpenDoc()).versionId;
+  const rv = reviewCards(structuredClone(gs.getFindings(id)));
+  assert.equal(rv.cards.length, 12, "the untracked change has its own section");
+  assert.equal(rv.progress, "0 of 12 handled");
+  assert.equal(rv.cards[0].verdict, "reject");
+  assert.match(rv.source, /^Playbook spa-share-deal@.*mock reviewer/);
 });

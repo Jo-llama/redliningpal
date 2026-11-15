@@ -170,6 +170,17 @@ function getUntracked(versionId) {
   return rpApi_("get", "/api/versions/" + rpId_(versionId, "version id") + "/untracked");
 }
 
+/**
+ * Playbook findings of the version, each with its state in the Doc as it is now
+ * (open / countered / accepted / rejected / changed): the Doc is exported again.
+ */
+function getFindings(versionId) {
+  var id = rpId_(versionId, "version id");
+  rpConfig_();
+  var bytes = rpExportOpenDoc_();
+  return rpApi_("post", "/api/versions/" + id + "/findings", { payload: bytes, contentType: "application/octet-stream" });
+}
+
 /** The lawyer has seen the untracked changes (recorded and audited on the server). */
 function ackUntracked(versionId) {
   return rpApi_("post", "/api/versions/" + rpId_(versionId, "version id") + "/ack-untracked");

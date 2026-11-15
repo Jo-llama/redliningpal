@@ -23,6 +23,15 @@
     .card .text { white-space: pre-wrap; }
     .card .hint { font-weight: bold; margin: 2px 0; }
     .verdict { font-size: 11px; text-transform: uppercase; letter-spacing: .03em; }
+    .diff del { color: #b3261e; } .diff ins { color: #0d652d; text-decoration: none; background: #e6f4ea; }
+    .state { display: inline-block; font-size: 11px; border-radius: 10px; padding: 1px 8px; margin-top: 4px; background: #e8eaed; }
+    .state.s-open { background: #fef7e0; } .state.s-changed { background: #fce8e6; }
+    .state.s-accepted, .state.s-rejected, .state.s-countered { background: #e6f4ea; }
+    .card.handled { opacity: .75; }
+    .v-reject { color: #b3261e; } .v-negotiate { color: #b06000; } .v-accept { color: #0d652d; }
+    ol.steps { margin: 6px 0 0; padding-left: 18px; }
+    label.inline { display: flex; align-items: center; gap: 6px; font-size: 12px; color: #202124; }
+    label.inline input { width: auto; }
     details { margin-top: 16px; border-top: 1px solid #dadce0; padding-top: 8px; }
     a { color: #1a73e8; }
   </style>
@@ -54,6 +63,16 @@
       <div id="cards"></div>
       <button id="ack" hidden>I have reviewed these changes</button>
       <div id="acked" class="ok" hidden></div>
+    </div>
+
+    <div id="review" hidden>
+      <h3>Playbook review</h3>
+      <div id="reviewSummary"></div>
+      <div id="reviewProgress" class="muted"></div>
+      <div id="reviewSource" class="muted"></div>
+      <label class="inline"><input type="checkbox" id="showHandled"> Show handled changes</label>
+      <div id="reviewCards"></div>
+      <button id="reviewRefresh">Refresh status</button>
     </div>
   </div>
 
@@ -90,7 +109,7 @@
   <script>
     // Server data is untrusted: it is only ever set via textContent, never parsed as HTML.
     var $ = function (id) { return document.getElementById(id); };
-    var state = { view: null, triage: null };
+    var state = { view: null, triage: null, review: null };
 
     function message(e) { return String((e && e.message) || e).replace(/^(Exception|Error):\s*/, ""); }
     function call(fn, args, ok, fail) {
@@ -128,6 +147,8 @@
       var fl = $("flags"); fl.textContent = "";
       v.flags.forEach(function (f) { fl.appendChild(el("li", "", f)); });
       $("openBase").hidden = !v.base;
+
+      loadReview(v.versionId);
 
       $("untracked").hidden = !v.untracked.count;
       if (v.untracked.count) {
@@ -169,46 +190,122 @@
         var ours = (u.finding && u.finding.counterProposal) || u.before;
         var edit = ours && u.after ? RPView.suggestionEdit(u.after, ours) : { kind: "whole" };
 
-        if (edit.kind === "insert" || edit.kind === "delete" || edit.kind === "replace") {
-          // only the words that differ, so the suggestion is as small as the change
-          card.appendChild(el("div", "label", "Suggested edit"));
-          card.appendChild(el("div", "hint", edit.hint));
-          card.appendChild(el("div", "muted", edit.kind === "delete"
-            ? "In Suggesting mode: Mark the text, then press Delete."
-            : "In Suggesting mode: Mark the spot, then paste."));
-          var mark = el("button", "", edit.kind === "insert" ? "Mark the spot" : "Mark the text");
-          mark.onclick = function () {
-            call("placeSuggestion", [{ kind: edit.kind, before: edit.before, oldText: edit.oldText, after: edit.after }], function (ok) {
-              note.textContent = ok
-                ? "Marked. Click into the document only if needed, then " + (edit.kind === "delete" ? "press Delete." : "paste (Ctrl+V).")
-                : "The spot was not found (edited since?). Use Go to and edit by hand.";
-            });
-          };
-          card.appendChild(mark);
-          if (edit.kind !== "delete") {
-            var label = edit.newText.trim();
-            var copyEdit = el("button", "", "Copy “" + (label.length > 30 ? label.slice(0, 29) + "…" : label) + "”");
-            copyEdit.onclick = function () {
-              copyText(edit.newText);
-              note.textContent = "Copied “" + label + "”. Paste it at the marked spot in Suggesting mode.";
-            };
-            card.appendChild(copyEdit);
-          }
-        } else if (edit.kind === "whole") {
-          var copy = el("button", "", "Copy our wording");
-          copy.disabled = !ours;
-          copy.onclick = function () {
-            copyText(ours);
-            note.textContent = "Copied. Paste it in Suggesting mode so it stays a tracked change.";
-          };
-          card.appendChild(copy);
-        } else {
-          note.textContent = "The document already has our wording here.";
-        }
+        if (!addEditButtons(card, edit, note, ours)) note.textContent = "The document already has our wording here.";
         card.appendChild(note);
         box.appendChild(card);
       });
     }
+
+    /**
+     * Buttons for a suggested edit (from RPView.suggestionEdit): only the words that differ,
+     * so the lawyer's suggestion is as small as the change. Returns false if there is nothing to do.
+     */
+    function addEditButtons(card, edit, note, ours) {
+      if (edit.kind === "insert" || edit.kind === "delete" || edit.kind === "replace") {
+        card.appendChild(el("div", "label", "Suggested edit"));
+        card.appendChild(el("div", "hint", edit.hint));
+        card.appendChild(el("div", "muted", edit.kind === "delete"
+          ? "In Suggesting mode: Mark the text, then press Delete."
+          : "In Suggesting mode: Mark the spot, then paste."));
+        var mark = el("button", "", edit.kind === "insert" ? "Mark the spot" : "Mark the text");
+        mark.onclick = function () {
+          call("placeSuggestion", [{ kind: edit.kind, before: edit.before, oldText: edit.oldText, after: edit.after }], function (ok) {
+            note.textContent = ok
+              ? "Marked. Click into the document only if needed, then " + (edit.kind === "delete" ? "press Delete." : "paste (Ctrl+V).")
+              : "The spot was not found (edited since?). Use Go to and edit by hand.";
+          });
+        };
+        card.appendChild(mark);
+        if (edit.kind !== "delete") {
+          var label = edit.newText.trim();
+          var copyEdit = el("button", "", "Copy “" + (label.length > 30 ? label.slice(0, 29) + "…" : label) + "”");
+          copyEdit.onclick = function () {
+            copyText(edit.newText);
+            note.textContent = "Copied “" + label + "”. Paste it at the marked spot in Suggesting mode.";
+          };
+          card.appendChild(copyEdit);
+        }
+        return true;
+      }
+      if (edit.kind === "whole" && ours) {
+        var copy = el("button", "", "Copy our wording");
+        copy.onclick = function () {
+          copyText(ours);
+          note.textContent = "Copied. Paste it in Suggesting mode so it stays a tracked change.";
+        };
+        card.appendChild(copy);
+        return true;
+      }
+      return false;
+    }
+
+    /** Try each text until one is found (a paragraph with an open suggestion may read either way). */
+    function goToFirst(texts, note) {
+      var i = 0;
+      (function next() {
+        if (i >= texts.length) { note.textContent = "Not found in the document (edited since?)."; return; }
+        call("goToText", [texts[i++]], function (found) { if (found) note.textContent = ""; else next(); });
+      })();
+    }
+
+    // ---- playbook review ------------------------------------------------------------------
+
+    function loadReview(versionId) {
+      $("review").hidden = false;
+      $("reviewCards").textContent = "Loading the playbook review…";
+      call("getFindings", [versionId], renderReview, function (e) { $("reviewCards").textContent = message(e); });
+    }
+
+    function renderReview(res) {
+      var rv = RPView.reviewCards(res);
+      state.review = rv;
+      $("reviewSummary").textContent = rv.summary;
+      $("reviewProgress").textContent = rv.cards.length ? rv.progress + (rv.allHandled ? " ✓" : "") : "";
+      $("reviewSource").textContent = rv.source || "";
+      drawReviewCards();
+    }
+
+    function drawReviewCards() {
+      var box = $("reviewCards"); box.textContent = "";
+      var show = $("showHandled").checked, hidden = 0;
+      state.review.cards.forEach(function (c) {
+        if (c.handled && !show) { hidden++; return; }
+        var card = el("div", "card" + (c.handled ? " handled" : ""));
+        card.appendChild(el("div", "head", c.title));
+        card.appendChild(el("div", "verdict v-" + c.verdict,
+          c.verdict.replace("_", " ") + (c.risk ? " · risk " + c.risk : "") + (c.ruleIds.length ? " · " + c.ruleIds.join(", ") : "")));
+        card.appendChild(el("div", "state s-" + c.state, c.stateText));
+        if (c.rationale) card.appendChild(el("div", "muted", c.rationale));
+        card.appendChild(el("div", "label", "Their change"));
+        var diff = el("div", "text diff");
+        c.diff.forEach(function (part) { diff.appendChild(el(part.op === "-" ? "del" : part.op === "+" ? "ins" : "span", "", part.text)); });
+        card.appendChild(diff);
+        if (c.steps.length) {
+          var ol = el("ol", "steps");
+          c.steps.forEach(function (step) { ol.appendChild(el("li", "", step)); });
+          card.appendChild(ol);
+        }
+        var note = el("div", "muted");
+        var go = el("button", "", "Go to");
+        go.onclick = function () { goToFirst(c.goTo, note); };
+        card.appendChild(go);
+        if (c.edit) addEditButtons(card, c.edit, note, c.ours);
+        if (c.comment && !c.handled) {
+          var cm = el("button", "", "Copy comment");
+          cm.onclick = function () {
+            copyText(c.comment);
+            note.textContent = "Copied. Add it as a comment on their suggestion (Ctrl+Alt+M).";
+          };
+          card.appendChild(cm);
+        }
+        card.appendChild(note);
+        box.appendChild(card);
+      });
+      if (hidden) box.appendChild(el("div", "muted", hidden + " handled change" + (hidden > 1 ? "s" : "") + " hidden."));
+    }
+
+    $("showHandled").onchange = function () { if (state.review) drawReviewCards(); };
+    $("reviewRefresh").onclick = function () { if (state.view && state.view.known) loadReview(state.view.versionId); };
 
     function copyText(text) {
       var ta = el("textarea"); ta.value = text; ta.style.position = "fixed"; ta.style.opacity = "0";

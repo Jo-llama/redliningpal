@@ -84,6 +84,18 @@ Add-on*, one test per Doc, config *Installed and enabled*, *Latest code*.
 
 A large change (over 200 characters) still shows "Copy our wording" for the whole text.
 
+## F2. Playbook review (v2.1)
+
+| # | Check | Expected | Result |
+|---|---|---|---|
+| R1 | Open the panel on the converted v2.1 | "Playbook review": 12 changes · 3 reject · 9 negotiate; "0 of 12 handled"; "Playbook spa-share-deal@…, mock reviewer" | – |
+| R2 | Card order and content | Reject cards first; verdict, rules, reasoning; their change as a word diff (red deleted, green inserted); numbered steps | – |
+| R3 | Go to on a card whose paragraph has an open suggestion | Doc scrolls to the paragraph (tries their text, then ours: note which one worked, Google's script view of suggested text is undocumented) | – |
+| R4 | Accept one suggestion (✓), reject another (✗), Refresh status | "Accepted" / "Rejected", cards hidden, "2 of 12 handled"; Show handled changes brings them back | – |
+| R5 | Reject one, then suggest a different wording on it in Suggesting mode, Refresh | "Our counter-proposal is in" | – |
+| R6 | Copy comment, Ctrl+Alt+M on their suggestion, paste | The prepared comment as a Docs comment | – |
+| R7 | Server audit log | `findings` lines with version id, unit count and progress counts, no contract text | – |
+
 ## G. Triage of an unknown Doc
 
 | # | Check | Expected | Result |

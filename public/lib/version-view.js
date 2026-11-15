@@ -3,6 +3,7 @@
 // none out, except in untrackedUnits (review cards, never logged).
 
 import { norm } from "./ooxml.js";
+import { suggestionEdit, wordDiff } from "./diff.js";
 
 const date = (iso) => (iso ? String(iso).slice(0, 10) : "");
 const ref = (n) => (n ? `${n.label} (${n.side}, ${date(n.receivedAt)})` : null);
@@ -88,4 +89,70 @@ export function untrackedUnits(serverUnits, parsedParas) {
       finding: u.finding,
     };
   });
+}
+
+// ---- playbook review (Google Docs sidebar) ------------------------------------------------
+
+const VERDICT_ORDER = { reject: 0, human_review: 1, negotiate: 2, accept: 3 };
+const STATE_TEXT = {
+  open: "Open",
+  countered: "Our counter-proposal is in",
+  accepted: "Accepted",
+  rejected: "Rejected",
+  changed: "Changed since the review: check by hand",
+};
+const HANDLED = new Set(["countered", "accepted", "rejected"]);
+
+/**
+ * Response of POST /api/versions/:id/findings -> what the "Playbook review" section shows.
+ * Only the counterparty's own changes (tracked / compare); untracked ones have their own section.
+ * Counter-proposals follow the Word flow: reject their change, then suggest ours, as the
+ * smallest edit from our text (what the paragraph says once theirs is rejected).
+ */
+export function reviewCards(res) {
+  const units = (res?.units || []).filter((u) => u.source !== "untracked");
+  const cards = units
+    .map((u, i) => {
+      const f = u.finding || {};
+      const verdict = f.verdict || "human_review";
+      const cp = f.counterProposal && norm(f.counterProposal) !== norm(u.before) ? norm(f.counterProposal) : null;
+      const steps = [];
+      let edit = null;
+      if (u.state === "open") {
+        if (verdict === "accept") steps.push("Accept their suggestion (✓ in the margin).");
+        else if (verdict === "human_review") steps.push("Decide yourself: accept (✓) or reject (✗) in the margin.");
+        else if (cp) {
+          steps.push("Reject their suggestion (✗ in the margin).");
+          edit = suggestionEdit(u.before, cp);
+          steps.push(edit.kind === "whole" || edit.kind === "none"
+            ? "Then paste our wording in Suggesting mode."
+            : `Then, in Suggesting mode: ${edit.hint}.`);
+        } else if (verdict === "reject") steps.push("Reject their suggestion (✗ in the margin).");
+        else steps.push("Reject their suggestion (✗), or keep it open and offer our fallback position in a comment.");
+      }
+      return {
+        id: u.id, order: i, verdict, risk: f.risk || null, ruleIds: f.ruleIds || [],
+        title: `${u.section || "Paragraph"} · ${u.kind}`,
+        rationale: f.rationale || "", flags: f.flags || [],
+        diff: wordDiff(u.before, u.after),
+        state: u.state, stateText: STATE_TEXT[u.state] || u.state, handled: HANDLED.has(u.state),
+        steps, edit, ours: cp, comment: f.comment || "",
+        goTo: [u.after, u.before].filter(Boolean),
+        carriedOver: u.status === "carried_over",
+      };
+    })
+    .sort((a, b) => (VERDICT_ORDER[a.verdict] ?? 9) - (VERDICT_ORDER[b.verdict] ?? 9) || a.order - b.order);
+
+  const verdicts = {};
+  for (const c of cards) verdicts[c.verdict] = (verdicts[c.verdict] || 0) + 1;
+  const handled = cards.filter((c) => c.handled).length;
+  const parts = ["reject", "human_review", "negotiate", "accept"].filter((v) => verdicts[v]).map((v) => `${verdicts[v]} ${v.replace("_", " ")}`);
+  const source = res?.mode === "live" ? res.model : "mock reviewer";
+  return {
+    cards,
+    summary: cards.length ? `${cards.length} change${cards.length > 1 ? "s" : ""} · ${parts.join(" · ")}` : "No changes to review.",
+    progress: `${handled} of ${cards.length} handled`,
+    source: res?.playbook ? `Playbook ${res.playbook}, ${source}${res.reviewedAt ? `, ${String(res.reviewedAt).slice(0, 10)}` : ""}` : null,
+    allHandled: cards.length > 0 && handled === cards.length,
+  };
 }

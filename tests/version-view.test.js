@@ -104,3 +104,53 @@ test("untracked units: located by current text nearest the stored index, behave 
   assert.equal(c.paragraphIndex, 0, "no text match and no index: start of document");
   assert.equal(a.id, "X-U7");
 });
+
+// ---- playbook review cards (Google Docs sidebar) --------------------------------------------
+
+import { reviewCards } from "../public/lib/version-view.js";
+
+const unit = (id, verdict, state, extra = {}) => ({
+  id, source: "tracked", kind: "modified", section: "4. Limitation of Liability", status: "new", state,
+  before: "4.1 not liable for claims below EUR 25,000.", after: "4.1 not liable for claims below EUR 100,000.",
+  finding: { verdict, risk: "medium", ruleIds: ["SPA-04"], rationale: "why", counterProposal: null, comment: "Please keep EUR 25,000.", flags: [] },
+  ...extra,
+});
+const findingsRes = (units, extra = {}) => ({ playbook: "spa-share-deal@2026-11", mode: "mock", model: null, reviewedAt: "2026-11-12T10:00:00Z", units, ...extra });
+
+test("review cards: reject first, untracked left out, summary and progress", () => {
+  const rv = reviewCards(findingsRes([
+    unit("U1", "negotiate", "open"), unit("U2", "accept", "accepted"), unit("U3", "reject", "open"),
+    unit("U4", "human_review", "changed"), unit("U5", "reject", "open", { source: "untracked" }),
+  ]));
+  assert.deepEqual(rv.cards.map((c) => c.id), ["U3", "U4", "U1", "U2"]);
+  assert.equal(rv.summary, "4 changes · 1 reject · 1 human review · 1 negotiate · 1 accept");
+  assert.equal(rv.progress, "1 of 4 handled");
+  assert.equal(rv.source, "Playbook spa-share-deal@2026-11, mock reviewer, 2026-11-12");
+  assert.equal(rv.allHandled, false);
+  assert.equal(rv.cards[1].stateText, "Changed since the review: check by hand");
+  assert.equal(reviewCards(findingsRes([], { mode: "live", model: "claude-sonnet-5-5" })).summary, "No changes to review.");
+  assert.match(reviewCards(findingsRes([unit("U1", "accept", "open")], { mode: "live", model: "claude-sonnet-5-5" })).source, /claude-sonnet-5-5/);
+});
+
+test("review cards: steps per verdict; a counter-proposal is 'reject, then the minimal edit from our text'", () => {
+  const rv = reviewCards(findingsRes([
+    unit("A", "accept", "open"),
+    unit("R", "reject", "open", { finding: { ...unit().finding, verdict: "reject", counterProposal: "4.1 not liable for claims below EUR 25,000." } }),
+    unit("N", "negotiate", "open", { finding: { ...unit().finding, verdict: "negotiate", counterProposal: "4.1 not liable for claims below EUR 50,000." } }),
+    unit("M", "negotiate", "open"),
+    unit("H", "human_review", "open"),
+    unit("D", "reject", "rejected"),
+  ]));
+  const by = Object.fromEntries(rv.cards.map((c) => [c.id, c]));
+  assert.deepEqual(by.A.steps, ["Accept their suggestion (✓ in the margin)."]);
+  assert.deepEqual(by.R.steps, ["Reject their suggestion (✗ in the margin)."], "counter-proposal = our text: just reject");
+  assert.equal(by.R.edit, null);
+  assert.deepEqual(by.N.steps, ["Reject their suggestion (✗ in the margin).", "Then, in Suggesting mode: Replace “25,000” with “50,000”."]);
+  assert.deepEqual([by.N.edit.kind, by.N.edit.oldText, by.N.edit.newText], ["replace", "25,000", "50,000"]);
+  assert.match(by.M.steps[0], /offer our fallback position in a comment/);
+  assert.match(by.H.steps[0], /^Decide yourself/);
+  assert.deepEqual(by.D.steps, [], "handled: nothing to do");
+  assert.equal(by.D.handled, true);
+  assert.deepEqual(by.N.goTo, [unit().after, unit().before]);
+  assert.deepEqual(by.N.diff.filter((p) => p.op !== "=").map((p) => p.op + p.text), ["-25,000.", "+100,000."]);
+});
